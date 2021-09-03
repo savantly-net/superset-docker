@@ -1,4 +1,5 @@
-FROM apache/superset:latest
+FROM apache/superset:1.3.0
+
 # Switching to root to install the required packages
 USER root
 
@@ -11,9 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Using Postgres and Dremio
 RUN pip install  --no-cache pyodbc psycopg2==2.8.5 redis==3.2.1 sqlalchemy_dremio
 
+
+ARG DREMIO_ODBC_FOLDER="1.5.3.1000_2"
+ARG DREMIO_ODBC_VERSION="1.5.3.1000-2"
+
 # Install Dremio ODBC driver
-RUN wget https://download.dremio.com/odbc-driver/dremio-odbc-LATEST.x86_64.rpm 
-RUN alien -i dremio-odbc-LATEST.x86_64.rpm 
+RUN wget https://download.dremio.com/odbc-driver/${DREMIO_ODBC_FOLDER}/dremio-odbc-${DREMIO_ODBC_VERSION}.x86_64.rpm 
+RUN alien -i dremio-odbc-${DREMIO_ODBC_VERSION}.x86_64.rpm 
 
 # Install dependencies for alerts/scheduling
 RUN apt-get update && \
