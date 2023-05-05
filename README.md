@@ -15,3 +15,9 @@ docker pull savantly/superset
 ```
 docker compose up
 ```
+
+The Dremio connection URL should look something like this  -  
+
+```
+dremio+flight://superset_app:XXXXXXXXXX@dremio-client:32010/dremio?UseEncryption=false
+```
