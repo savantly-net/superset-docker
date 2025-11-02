@@ -1,46 +1,39 @@
-FROM apache/superset:2.1.0
+ARG BASE_TAG
 
-# Switching to root to install the required packages
+FROM apache/superset:${BASE_TAG:-5.0.0}
+
 USER root
 
-# Install ODBC libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    unixodbc \
-    unixodbc-dev \
-    alien \
-    wget
+# Set environment variable for Playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 
-# Using Postgres and Dremio
-RUN pip install  --no-cache pyodbc psycopg2==2.8.5 redis==3.2.1 sqlalchemy_dremio=3.0.3
+# Install packages using uv into the virtual environment
+# Superset started using uv after the 4.1 branch; if you are building from apache/superset:4.1.x or an older version,
+# replace the first two lines with RUN pip install \
+RUN . /app/.venv/bin/activate && \
+    uv pip install \
+    # install psycopg2 for using PostgreSQL metadata store - could be a MySQL package if using that backend:
+    psycopg2-binary \
+    # add the driver(s) for your data warehouse(s), in this example we're showing for Microsoft SQL Server:
+    pymssql \
+    # package needed for using single-sign on authentication:
+    Authlib \
+    # openpyxl to be able to upload Excel files
+    openpyxl \
+    # Pillow for Alerts & Reports to generate PDFs of dashboards
+    Pillow \
+    # install Playwright for taking screenshots for Alerts & Reports. This assumes the feature flag PLAYWRIGHT_REPORTS_AND_THUMBNAILS is enabled
+    # That feature flag will default to True starting in 6.0.0
+    # Playwright works only with Chrome.
+    # If you are still using Selenium instead of Playwright, you would instead install here the selenium package and a headless browser & webdriver
+    playwright \
+    && playwright install-deps \
+    && PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers playwright install chromium
 
-# Install Dremio ODBC driver
-ARG DREMIO_ODBC_PACKAGE_NAME=arrow-flight-sql-odbc-driver-LATEST.x86_64.rpm
-ENV DREMIO_ODBC_URL=https://download.dremio.com/arrow-flight-sql-odbc-driver/${DREMIO_ODBC_PACKAGE_NAME}
-RUN wget ${DREMIO_ODBC_URL}
-RUN alien -i ${DREMIO_ODBC_PACKAGE_NAME}
-# Remove alien
-RUN apt-get purge -y --auto-remove alien 
-
-# Install dependencies for alerts/scheduling
-RUN apt-get update -y \
-    && apt-get install -y --no-install-recommends libnss3 libdbus-glib-1-2 libgtk-3-0 libx11-xcb1
-
-# Install GeckoDriver WebDriver
-ARG GECKODRIVER_VERSION=v0.28.0
-RUN wget https://github.com/mozilla/geckodriver/releases/download/${GECKODRIVER_VERSION}/geckodriver-${GECKODRIVER_VERSION}-linux64.tar.gz -O /tmp/geckodriver.tar.gz && \
-    tar xvfz /tmp/geckodriver.tar.gz -C /tmp && \
-    mv /tmp/geckodriver /usr/local/bin/geckodriver && \
-    rm /tmp/geckodriver.tar.gz
-
-# Install Firefox
-ARG FIREFOX_VERSION=88.0
-RUN wget https://download-installer.cdn.mozilla.net/pub/firefox/releases/${FIREFOX_VERSION}/linux-x86_64/en-US/firefox-${FIREFOX_VERSION}.tar.bz2 -O /opt/firefox.tar.bz2 && \
-    tar xvf /opt/firefox.tar.bz2 -C /opt && \
-    ln -s /opt/firefox/firefox /usr/local/bin/firefox
-    
-RUN pip install --no-cache gevent
-
-# Switching back to using the `superset` user
+# Switch back to the superset user
 USER superset
 
-COPY config/superset_config.py /app/pythonpath/superset_config.py
+COPY --chown=superset config/superset_config.py /app/
+ENV SUPERSET_CONFIG_PATH /app/superset_config.py
+
+CMD ["/app/docker/entrypoints/run-server.sh"]
