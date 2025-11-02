@@ -124,21 +124,21 @@ SECRET_KEY = get_env_variable("SECRET_KEY")
 # This will make sure the redirect_uri is properly computed, even with SSL offloading
 ENABLE_PROXY_FIX = get_env_variable("ENABLE_PROXY_FIX", False)
 
-DATABASE_DIALECT = get_env_variable("DATABASE_DIALECT")
-DATABASE_USER = get_env_variable("DATABASE_USER")
-DATABASE_PASSWORD = get_env_variable("DATABASE_PASSWORD")
-DATABASE_HOST = get_env_variable("DATABASE_HOST")
-DATABASE_PORT = get_env_variable("DATABASE_PORT")
-DATABASE_DB = get_env_variable("DATABASE_DB")
+DB_DIALECT = get_env_variable("DB_DIALECT")
+DB_USER = get_env_variable("DB_USER")
+DB_PASSWORD = get_env_variable("DB_PASSWORD")
+DB_HOST = get_env_variable("DB_HOST")
+DB_PORT = get_env_variable("DB_PORT")
+DB_NAME = get_env_variable("DB_NAME")
 
 # The SQLAlchemy connection string.
 SQLALCHEMY_DATABASE_URI = "%s://%s:%s@%s:%s/%s" % (
-    DATABASE_DIALECT,
-    DATABASE_USER,
-    DATABASE_PASSWORD,
-    DATABASE_HOST,
-    DATABASE_PORT,
-    DATABASE_DB,
+    DB_DIALECT,
+    DB_USER,
+    DB_PASSWORD,
+    DB_HOST,
+    DB_PORT,
+    DB_NAME,
 )
 
 REDIS_PROTOCOL = get_env_variable("REDIS_PROTOCOL", "redis")
