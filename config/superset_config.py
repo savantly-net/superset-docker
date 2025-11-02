@@ -65,27 +65,41 @@ if enable_oauth:
     oauth_roles_path = get_env_variable("OAUTH_ROLES_PATH", "roles")
     # OAuth scope parameter (space-separated scopes, e.g., "profile email roles")
     oauth_scope = get_env_variable("OAUTH_SCOPE", "openid")
+    # JWKS URI for token validation (required for OpenID Connect)
+    oauth_jwks_uri = get_env_variable("OAUTH_JWKS_URI", "")
+    # Server metadata URL for OpenID Connect discovery
+    oauth_server_metadata_url = get_env_variable("OAUTH_SERVER_METADATA_URL", "")
     
     from flask_appbuilder.security.manager import AUTH_OAUTH
     AUTH_TYPE = AUTH_OAUTH
 
-    OAUTH_PROVIDERS = [
-        {   'name': oauth_name,
-            'token_key': oauth_token_key, 
-            'icon':'fa-address-card',   # Icon for the provider
-            'remote_app': {
-                'api_base_url': oauthBaseUrl,
-                'client_id': oauth_client_id, 
-                'client_secret': oauth_client_secret,
-                'client_kwargs':{
-                    'scope': oauth_scope
-                },
-                'request_token_url':None,
-                'access_token_url': oauth_token_endpoint,
-                'authorize_url': oauth_authorization_endpoint,
-            }
+    # Build OAuth provider configuration
+    oauth_provider_config = {
+        'name': oauth_name,
+        'token_key': oauth_token_key, 
+        'icon':'fa-address-card',   # Icon for the provider
+        'remote_app': {
+            'api_base_url': oauthBaseUrl,
+            'client_id': oauth_client_id, 
+            'client_secret': oauth_client_secret,
+            'client_kwargs':{
+                'scope': oauth_scope
+            },
+            'request_token_url':None,
+            'access_token_url': oauth_token_endpoint,
+            'authorize_url': oauth_authorization_endpoint,
         }
-    ]
+    }
+    
+    # Add JWKS URI if provided (required for OpenID Connect)
+    if oauth_jwks_uri:
+        oauth_provider_config['remote_app']['jwks_uri'] = oauth_jwks_uri
+    
+    # Add server metadata URL if provided (for OpenID Connect discovery)
+    if oauth_server_metadata_url:
+        oauth_provider_config['remote_app']['server_metadata_url'] = oauth_server_metadata_url
+
+    OAUTH_PROVIDERS = [oauth_provider_config]
 
 
 
