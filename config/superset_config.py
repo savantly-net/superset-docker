@@ -61,6 +61,8 @@ if enable_oauth:
     oauth_token_endpoint = get_env_variable("OAUTH_TOKEN_ENDPOINT")
     oauth_authorization_endpoint = get_env_variable("OAUTH_AUTHORIZATION_ENDPOINT")
     userinfo_endpoint = get_env_variable("OAUTH_USERINFO_ENDPOINT", "")
+    # Path to roles in OAuth user info response (supports dot notation for nested paths, e.g., "user.roles" or "attributes.roles")
+    oauth_roles_path = get_env_variable("OAUTH_ROLES_PATH", "roles")
     
     from flask_appbuilder.security.manager import AUTH_OAUTH
     AUTH_TYPE = AUTH_OAUTH
@@ -85,6 +87,18 @@ if enable_oauth:
 
 
 
+def get_nested_value(data, path, default=None):
+    """Get a nested value from a dictionary using a dot-separated path."""
+    keys = path.split('.')
+    current = data
+    try:
+        for key in keys:
+            current = current[key]
+        return current
+    except (KeyError, TypeError):
+        return default
+
+
 class CustomSsoSecurityManager(SupersetSecurityManager):
     def oauth_user_info(self, provider, response=None):
         logging.debug("Oauth2 provider: {0}.".format(provider))
@@ -101,13 +115,17 @@ class CustomSsoSecurityManager(SupersetSecurityManager):
         #dict_str = res._content.decode("UTF-8")
         me = json.loads(res._content)
         logger.debug(" user_data: %s", me)
+        
+        # Get roles using configurable path
+        user_roles = get_nested_value(me, oauth_roles_path, [])
+        
         return {
             'username' : me['preferred_username'],
             'name' : me['name'],
             'email' : me['email'],
             'first_name': me['given_name'],
             'last_name': me['family_name'],
-            'roles': me['roles'],
+            'roles': user_roles,
             'is_active': True,
         }
 
