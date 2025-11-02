@@ -20,6 +20,7 @@
 # development environments. Also note that superset_config_docker.py is imported
 # as a final step as a means to override "defaults" configured here
 #
+import ast
 import logging
 import os
 from datetime import timedelta
@@ -60,7 +61,8 @@ if enable_oauth:
     oauth_token_endpoint = get_env_variable("OAUTH_TOKEN_ENDPOINT")
     oauth_authorization_endpoint = get_env_variable("OAUTH_AUTHORIZATION_ENDPOINT")
     userinfo_endpoint = get_env_variable("OAUTH_USERINFO_ENDPOINT", "")
-
+    
+    from flask_appbuilder.security.manager import AUTH_OAUTH
     AUTH_TYPE = AUTH_OAUTH
 
     OAUTH_PROVIDERS = [
