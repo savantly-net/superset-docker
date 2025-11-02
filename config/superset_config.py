@@ -63,6 +63,8 @@ if enable_oauth:
     userinfo_endpoint = get_env_variable("OAUTH_USERINFO_ENDPOINT", "")
     # Path to roles in OAuth user info response (supports dot notation for nested paths, e.g., "user.roles" or "attributes.roles")
     oauth_roles_path = get_env_variable("OAUTH_ROLES_PATH", "roles")
+    # OAuth scope parameter (space-separated scopes, e.g., "profile email roles")
+    oauth_scope = get_env_variable("OAUTH_SCOPE", "openid")
     
     from flask_appbuilder.security.manager import AUTH_OAUTH
     AUTH_TYPE = AUTH_OAUTH
@@ -76,7 +78,7 @@ if enable_oauth:
                 'client_id': oauth_client_id, 
                 'client_secret': oauth_client_secret,
                 'client_kwargs':{
-                    'scope': 'profile'
+                    'scope': oauth_scope
                 },
                 'request_token_url':None,
                 'access_token_url': oauth_token_endpoint,
