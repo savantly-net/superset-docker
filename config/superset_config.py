@@ -23,8 +23,10 @@
 import ast
 import logging
 import os
+import urllib.request
 from datetime import timedelta
 from typing import Optional
+from pathlib import Path
 
 from cachelib.file import FileSystemCache
 from celery.schedules import crontab
@@ -45,6 +47,43 @@ def get_env_variable(var_name: str, default: Optional[str] = None) -> str:
                 var_name
             )
             raise EnvironmentError(error_msg)
+
+
+def download_logo_from_url(logo_url: str) -> str:
+    """Download logo from URL and return local path."""
+    try:
+        # Create logos directory if it doesn't exist
+        logos_dir = Path("/app/superset_home/logos")
+        logos_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Extract filename from URL or use default
+        filename = logo_url.split("/")[-1]
+        if not filename or "." not in filename:
+            filename = "app_logo.png"
+        
+        local_path = logos_dir / filename
+        
+        # Download the image
+        urllib.request.urlretrieve(logo_url, local_path)
+        logger.info(f"Downloaded logo from {logo_url} to {local_path}")
+        
+        return str(local_path)
+    except Exception as e:
+        logger.error(f"Failed to download logo from {logo_url}: {e}")
+        return None
+
+
+# Handle APP_LOGO environment variable
+app_logo_url = get_env_variable("APP_LOGO", "")
+APP_LOGO = None
+
+if app_logo_url:
+    downloaded_logo_path = download_logo_from_url(app_logo_url)
+    if downloaded_logo_path:
+        APP_LOGO = downloaded_logo_path
+        logger.info(f"APP_LOGO set to: {APP_LOGO}")
+    else:
+        logger.warning("Failed to download APP_LOGO, using default logo")
 
 
 import json
