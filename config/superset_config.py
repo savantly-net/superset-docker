@@ -73,19 +73,19 @@ def download_logo_from_url(logo_url: str) -> str:
         return None
 
 
-# Handle APP_LOGO environment variable
-app_logo_url = get_env_variable("APP_LOGO", "")
-APP_LOGO = None
+# Handle APP_ICON environment variable
+app_logo_url = get_env_variable("APP_ICON", "")
+APP_ICON = None
 
 if app_logo_url:
     downloaded_logo_path = download_logo_from_url(app_logo_url)
     if downloaded_logo_path:
         # Strip /app/superset prefix to make path relative to web server root
         relative_path = downloaded_logo_path.replace("/app/superset", "")
-        APP_LOGO = relative_path
-        logger.info(f"APP_LOGO set to: {APP_LOGO}")
+        APP_ICON = relative_path
+        logger.info(f"APP_ICON set to: {APP_ICON}")
     else:
-        logger.warning("Failed to download APP_LOGO, using default logo")
+        logger.warning("Failed to download APP_ICON, using default logo")
 
 
 import json
