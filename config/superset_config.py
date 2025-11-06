@@ -53,7 +53,7 @@ def download_logo_from_url(logo_url: str) -> str:
     """Download logo from URL and return local path."""
     try:
         # Create logos directory if it doesn't exist
-        logos_dir = Path("/app/superset_home/logos")
+        logos_dir = Path("/app/superset/static/assets/images/")
         logos_dir.mkdir(parents=True, exist_ok=True)
         
         # Extract filename from URL or use default
@@ -80,7 +80,9 @@ APP_LOGO = None
 if app_logo_url:
     downloaded_logo_path = download_logo_from_url(app_logo_url)
     if downloaded_logo_path:
-        APP_LOGO = downloaded_logo_path
+        # Strip /app/superset prefix to make path relative to web server root
+        relative_path = downloaded_logo_path.replace("/app/superset", "")
+        APP_LOGO = relative_path
         logger.info(f"APP_LOGO set to: {APP_LOGO}")
     else:
         logger.warning("Failed to download APP_LOGO, using default logo")
