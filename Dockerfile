@@ -22,6 +22,8 @@ RUN . /app/.venv/bin/activate && \
     openpyxl \
     # Pillow for Alerts & Reports to generate PDFs of dashboards
     Pillow \
+    # For connecting to Google Sheets
+    shillelagh[gsheets] \
     # install Playwright for taking screenshots for Alerts & Reports. This assumes the feature flag PLAYWRIGHT_REPORTS_AND_THUMBNAILS is enabled
     # That feature flag will default to True starting in 6.0.0
     # Playwright works only with Chrome.
