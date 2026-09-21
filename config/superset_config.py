@@ -276,6 +276,9 @@ AUTH_USER_REGISTRATION = get_env_variable("AUTH_USER_REGISTRATION", True)
 
 # The default user self registration role
 AUTH_USER_REGISTRATION_ROLE = get_env_variable("AUTH_USER_REGISTRATION_ROLE", "Public")
+# Superset 6.x reads this on /login/ whenever registration is on and auth is not OAuth (apache/superset#39364);
+# the default config does not define it, so DB-auth mode 500s without this. Empty = no captcha.
+RECAPTCHA_PUBLIC_KEY = ""
 
 if enable_oauth:
     from flask_appbuilder.security.manager import AUTH_OAUTH
