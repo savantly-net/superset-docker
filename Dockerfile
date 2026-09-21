@@ -8,27 +8,28 @@ USER root
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 
 # Install packages using uv into the virtual environment
+# Versions pinned to the image built 2026-02-05 (savantly/superset:5.0.0) so rebuilds are reproducible.
 # Superset started using uv after the 4.1 branch; if you are building from apache/superset:4.1.x or an older version,
 # replace the first two lines with RUN pip install \
 RUN . /app/.venv/bin/activate && \
     uv pip install \
     # install psycopg2 for using PostgreSQL metadata store - could be a MySQL package if using that backend:
-    psycopg2-binary \
+    psycopg2-binary==2.9.11 \
     # add the driver(s) for your data warehouse(s), in this example we're showing for Microsoft SQL Server:
-    pymssql \
+    pymssql==2.3.11 \
     # package needed for using single-sign on authentication:
-    Authlib \
+    Authlib==1.6.6 \
     # openpyxl to be able to upload Excel files
-    openpyxl \
+    openpyxl==3.1.5 \
     # Pillow for Alerts & Reports to generate PDFs of dashboards
-    Pillow \
+    Pillow==12.1.0 \
     # For connecting to Google Sheets
-    shillelagh[gsheets] \
+    shillelagh[gsheets]==1.2.18 \
     # install Playwright for taking screenshots for Alerts & Reports. This assumes the feature flag PLAYWRIGHT_REPORTS_AND_THUMBNAILS is enabled
     # That feature flag will default to True starting in 6.0.0
     # Playwright works only with Chrome.
     # If you are still using Selenium instead of Playwright, you would instead install here the selenium package and a headless browser & webdriver
-    playwright \
+    playwright==1.55.0 \
     && playwright install-deps \
     && PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers playwright install chromium
 

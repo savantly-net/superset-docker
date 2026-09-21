@@ -55,18 +55,26 @@ def download_logo_from_url(logo_url: str) -> str:
         # Create logos directory if it doesn't exist
         logos_dir = Path("/app/superset/static/assets/images/")
         logos_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Extract filename from URL or use default
         filename = logo_url.split("/")[-1]
         if not filename or "." not in filename:
             filename = "app_logo.png"
-        
+
         local_path = logos_dir / filename
-        
-        # Download the image
-        urllib.request.urlretrieve(logo_url, local_path)
+
+        # Download the image with custom User-Agent
+        # This allows users to whitelist this agent in Cloudflare/WAF rules
+        request = urllib.request.Request(
+            logo_url,
+            headers={"User-Agent": "Superset-Logo-Fetcher/1.0"}
+        )
+        with urllib.request.urlopen(request) as response:
+            with open(local_path, "wb") as f:
+                f.write(response.read())
+
         logger.info(f"Downloaded logo from {logo_url} to {local_path}")
-        
+
         return str(local_path)
     except Exception as e:
         logger.error(f"Failed to download logo from {logo_url}: {e}")
@@ -74,8 +82,10 @@ def download_logo_from_url(logo_url: str) -> str:
 
 
 # Handle APP_ICON environment variable
+# Only set APP_ICON if we successfully download the custom logo.
+# If download fails, don't set APP_ICON at all so Superset uses its built-in default.
+# Setting APP_ICON to None causes a crash in Superset's "show_watermark" check.
 app_logo_url = get_env_variable("APP_ICON", "")
-APP_ICON = None
 
 if app_logo_url:
     downloaded_logo_path = download_logo_from_url(app_logo_url)
@@ -91,7 +101,8 @@ if app_logo_url:
 import json
 from superset.security import SupersetSecurityManager
 
-enable_oauth = get_env_variable("OAUTH_ENABLED", False)
+# Env values are strings: "false" was truthy before this check existed.
+enable_oauth = str(get_env_variable("OAUTH_ENABLED", "false")).strip().lower() in ("1", "true", "yes")
 
 if enable_oauth:
     oauthBaseUrl = get_env_variable("OAUTH_ISSUER")
