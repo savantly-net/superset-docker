@@ -1,6 +1,6 @@
 ARG BASE_TAG
 
-FROM apache/superset:${BASE_TAG:-5.0.0}
+FROM apache/superset:${BASE_TAG:-6.1.0}
 
 USER root
 
@@ -9,6 +9,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 
 # Install packages using uv into the virtual environment
 # Versions pinned to the image built 2026-02-05 (savantly/superset:5.0.0) so rebuilds are reproducible.
+# shillelagh follows the 6.1.0 base (it ships 1.4.3 as a Superset dependency; pinning lower would downgrade it).
 # Superset started using uv after the 4.1 branch; if you are building from apache/superset:4.1.x or an older version,
 # replace the first two lines with RUN pip install \
 RUN . /app/.venv/bin/activate && \
@@ -24,12 +25,14 @@ RUN . /app/.venv/bin/activate && \
     # Pillow for Alerts & Reports to generate PDFs of dashboards
     Pillow==12.1.0 \
     # For connecting to Google Sheets
-    shillelagh[gsheets]==1.2.18 \
+    shillelagh[gsheets]==1.4.3 \
     # install Playwright for taking screenshots for Alerts & Reports. This assumes the feature flag PLAYWRIGHT_REPORTS_AND_THUMBNAILS is enabled
     # That feature flag will default to True starting in 6.0.0
     # Playwright works only with Chrome.
     # If you are still using Selenium instead of Playwright, you would instead install here the selenium package and a headless browser & webdriver
     playwright==1.55.0 \
+    # fastmcp enables the built-in MCP server (`superset mcp run`), new in 6.1; same range as apache-superset[fastmcp]
+    "fastmcp>=3.1.0,<4.0" \
     && playwright install-deps \
     && PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers playwright install chromium
 
