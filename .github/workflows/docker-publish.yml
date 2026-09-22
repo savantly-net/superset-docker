@@ -1,19 +1,26 @@
 name: Build and push Docker image
 
 # Pull requests and pushes to main only BUILD (a compile check for the Dockerfile and config).
-# Publishing is a manual, deliberate act: run the workflow with the base tag to publish.
-# Version tags are treated as immutable and `latest` moves only when asked, so a merge can
-# never overwrite the tag production is running.
+# Publishing is a deliberate act: push a git tag (v6.1.0, or v6.1.0-2 for a rebuild on the same
+# Superset version) or run the workflow by hand. Version tags are immutable and `latest` moves only
+# when asked, so a merge can never overwrite the tag production is running.
 on:
   push:
     branches: [main]
+    # Pushing a git tag publishes: v6.1.0 -> savantly/superset:6.1.0 (built from apache/superset:6.1.0);
+    # v6.1.0-2 -> savantly/superset:6.1.0-2 (a second build of our image on the same Superset version).
+    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
       base_tag:
-        description: "apache/superset base image tag to build from; also the published version tag (e.g. 6.1.0)"
+        description: "apache/superset base image tag to build from (e.g. 6.1.0)"
         required: true
+        type: string
+      image_tag:
+        description: "Tag to publish as (default: same as base_tag; use 6.1.0-2 for a rebuild on the same base)"
+        required: false
         type: string
       push_latest:
         description: "Also move savantly/superset:latest to this build (only after the version is proven in prod)"
@@ -41,26 +48,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Resolve base tag
+      - name: Resolve tags
         id: tag
-        # Manual runs choose the tag; build-only runs use the Dockerfile default so PRs test what they change.
+        # base_tag  = the apache/superset version to build FROM
+        # image_tag = what we publish AS (base_tag, or base_tag-N for a rebuild on the same base)
         run: |
-          if [ -n "${{ github.event.inputs.base_tag }}" ]; then
-            tag="${{ github.event.inputs.base_tag }}"
-          else
-            tag=$(sed -nE 's/^FROM apache\/superset:\$\{BASE_TAG:-([^}]+)\}.*/\1/p' Dockerfile)
+          publish=false; push_latest=false
+          case "${{ github.event_name }}" in
+            push)
+              if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+                ref="${{ github.ref_name }}"
+                if [[ ! "$ref" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9]+)?$ ]]; then
+                  echo "::error::git tag '$ref' must look like v6.1.0 or v6.1.0-2"; exit 1
+                fi
+                base="${BASH_REMATCH[1]}"; image="${ref#v}"; publish=true
+              else
+                base=$(sed -nE 's/^FROM apache\/superset:\$\{BASE_TAG:-([^}]+)\}.*/\1/p' Dockerfile); image="$base"
+              fi ;;
+            workflow_dispatch)
+              base="${{ inputs.base_tag }}"; image="${{ inputs.image_tag }}"; image="${image:-$base}"
+              publish=true; push_latest="${{ inputs.push_latest }}" ;;
+            *)
+              base=$(sed -nE 's/^FROM apache\/superset:\$\{BASE_TAG:-([^}]+)\}.*/\1/p' Dockerfile); image="$base" ;;
+          esac
+          if [[ ! "$image" =~ ^${base//./\\.}(-[0-9]+)?$ ]]; then
+            echo "::error::image tag '$image' must be '$base' or '$base-N'"; exit 1
           fi
-          echo "base_tag=$tag" >> "$GITHUB_OUTPUT"
-          tags="${IMAGE_NAME}:${tag}"
-          if [ "${{ github.event.inputs.push_latest }}" = "true" ]; then tags="${tags},${IMAGE_NAME}:latest"; fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
-          echo "Building from apache/superset:$tag -> $tags"
+          tags="${IMAGE_NAME}:${image}"
+          if [ "$push_latest" = "true" ]; then tags="${tags},${IMAGE_NAME}:latest"; fi
+          {
+            echo "base_tag=$base"; echo "image_tag=$image"; echo "publish=$publish"; echo "tags=$tags"
+          } >> "$GITHUB_OUTPUT"
+          echo "event=${{ github.event_name }} base=$base image=$image publish=$publish tags=$tags"
 
       - name: Refuse to overwrite a published version tag
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.tag.outputs.publish == 'true'
         run: |
-          if docker manifest inspect "${IMAGE_NAME}:${{ steps.tag.outputs.base_tag }}" >/dev/null 2>&1; then
-            echo "::error::${IMAGE_NAME}:${{ steps.tag.outputs.base_tag }} already exists on Docker Hub; version tags are immutable. Delete it there first if a rebuild is really intended."
+          if docker manifest inspect "${IMAGE_NAME}:${{ steps.tag.outputs.image_tag }}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE_NAME}:${{ steps.tag.outputs.image_tag }} already exists on Docker Hub; version tags are immutable. Publish a rebuild as ${{ steps.tag.outputs.base_tag }}-N instead."
             exit 1
           fi
 
@@ -68,7 +93,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.tag.outputs.publish == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -82,17 +107,18 @@ jobs:
           platforms: linux/amd64
           build-args: |
             BASE_TAG=${{ steps.tag.outputs.base_tag }}
-          push: ${{ github.event_name == 'workflow_dispatch' }}
+          push: ${{ steps.tag.outputs.publish == 'true' }}
           tags: ${{ steps.tag.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Summary
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.tag.outputs.publish == 'true'
         run: |
           {
-            echo "Published \`${IMAGE_NAME}:${{ steps.tag.outputs.base_tag }}\`"
+            echo "Published \`${IMAGE_NAME}:${{ steps.tag.outputs.image_tag }}\` (built from apache/superset:${{ steps.tag.outputs.base_tag }})"
             echo ""
             echo "- digest: \`${{ steps.build.outputs.digest }}\`"
-            echo "- latest moved: ${{ github.event.inputs.push_latest }}"
+            echo "- pin in stellar-devops values as: \`${{ steps.tag.outputs.image_tag }}@${{ steps.build.outputs.digest }}\`"
+            echo "- latest moved: ${{ steps.tag.outputs.tags != format('{0}:{1}', env.IMAGE_NAME, steps.tag.outputs.image_tag) }}"
           } >> "$GITHUB_STEP_SUMMARY"
