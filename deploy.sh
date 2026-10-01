@@ -1,9 +1,8 @@
 #!/bin/bash
 
 BASE_TAG=6.1.0
-# During the 5.0.0 -> 6.1.0 upgrade only the version tag is pushed; `latest` stays on 5.0.0 until prod cutover.
-# Revert to unconditional pushes after the cutover (PUSH_LATEST=true pushes it now).
-PUSH_LATEST=${PUSH_LATEST:-false}
+# Set PUSH_LATEST=false to publish only the version tag (e.g. while a new version is proven on dev first).
+PUSH_LATEST=${PUSH_LATEST:-true}
 
 REPO_NAME=savantly/superset
 
