@@ -4,8 +4,9 @@ Superset docker image for Savantly projects: `savantly/superset` on Docker Hub.
 ## What the image adds
 Since Superset 7.0 the upstream default image is batteries-included (Postgres driver, Authlib for SSO, the
 fastmcp MCP server, Playwright + Chromium for reports and thumbnails, Google Sheets). This image adds only
-the SQL Server driver (`pymssql`) and our `config/superset_config.py`. Rebuilding from a different Superset
-version is `--build-arg BASE_TAG=<apache/superset tag>`.
+our `config/superset_config.py`; extra database drivers (e.g. `pymssql` for SQL Server) would go in a
+`RUN . /app/.venv/bin/activate && uv pip install ...` step between `USER root` and `USER superset`.
+Rebuilding from a different Superset version is `--build-arg BASE_TAG=<apache/superset tag>`.
 
 ## Publishing
 Images are published by CI from git tags, never from merges:
