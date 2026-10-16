@@ -1,45 +1,11 @@
 ARG BASE_TAG
 
-FROM apache/superset:${BASE_TAG:-6.1.0}
-
-USER root
-
-# Set environment variable for Playwright
-ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
-
-# Install packages using uv into the virtual environment
-# Versions pinned to the image built 2026-02-05 (savantly/superset:5.0.0) so rebuilds are reproducible.
-# shillelagh follows the 6.1.0 base (it ships 1.4.3 as a Superset dependency; pinning lower would downgrade it).
-# Superset started using uv after the 4.1 branch; if you are building from apache/superset:4.1.x or an older version,
-# replace the first two lines with RUN pip install \
-RUN . /app/.venv/bin/activate && \
-    uv pip install \
-    # install psycopg2 for using PostgreSQL metadata store - could be a MySQL package if using that backend:
-    psycopg2-binary==2.9.11 \
-    # add the driver(s) for your data warehouse(s), in this example we're showing for Microsoft SQL Server:
-    pymssql==2.3.11 \
-    # package needed for using single-sign on authentication:
-    Authlib==1.6.6 \
-    # openpyxl to be able to upload Excel files
-    openpyxl==3.1.5 \
-    # Pillow for Alerts & Reports to generate PDFs of dashboards
-    Pillow==12.1.0 \
-    # For connecting to Google Sheets
-    shillelagh[gsheets]==1.4.3 \
-    # install Playwright for taking screenshots for Alerts & Reports. This assumes the feature flag PLAYWRIGHT_REPORTS_AND_THUMBNAILS is enabled
-    # That feature flag will default to True starting in 6.0.0
-    # Playwright works only with Chrome.
-    # If you are still using Selenium instead of Playwright, you would instead install here the selenium package and a headless browser & webdriver
-    playwright==1.55.0 \
-    # fastmcp enables the built-in MCP server (`superset mcp run`), new in 6.1; same range as apache-superset[fastmcp]
-    "fastmcp>=3.1.0,<4.0" \
-    && playwright install-deps \
-    && PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers playwright install chromium
-
-# Switch back to the superset user
-USER superset
+# Since 7.0 the default apache/superset image is batteries-included: Postgres driver, Authlib (SSO),
+# fastmcp (MCP server), Playwright + Chromium (reports/thumbnails), openpyxl, Pillow and the Google Sheets
+# adapter are all in the base. This image only adds our config.
+FROM apache/superset:${BASE_TAG:-7.0.0rc1}
 
 COPY --chown=superset config/superset_config.py /app/
-ENV SUPERSET_CONFIG_PATH /app/superset_config.py
+ENV SUPERSET_CONFIG_PATH=/app/superset_config.py
 
 CMD ["/app/docker/entrypoints/run-server.sh"]

@@ -1,25 +1,25 @@
 name: Build and push Docker image
 
 # Pull requests and pushes to main only BUILD (a compile check for the Dockerfile and config).
-# Publishing is a deliberate act: push a git tag (v6.1.0, or v6.1.0-2 for a rebuild on the same
-# Superset version) or run the workflow by hand. Version tags are immutable and `latest` moves only
-# when asked, so a merge can never overwrite the tag production is running.
+# Publishing is a deliberate act: push a git tag (v7.0.0, v7.0.0rc1, or v7.0.0-2 for a rebuild on the
+# same Superset version) or run the workflow by hand. Version tags are immutable and `latest` moves only
+# when asked (never to a release candidate), so a merge can never overwrite the tag production is running.
 on:
   push:
     branches: [main]
-    # Pushing a git tag publishes: v6.1.0 -> savantly/superset:6.1.0 (built from apache/superset:6.1.0);
-    # v6.1.0-2 -> savantly/superset:6.1.0-2 (a second build of our image on the same Superset version).
+    # Pushing a git tag publishes: v7.0.0 -> savantly/superset:7.0.0 (built from apache/superset:7.0.0);
+    # v7.0.0rc1 -> savantly/superset:7.0.0rc1; v7.0.0-2 -> savantly/superset:7.0.0-2 (a rebuild on the same base).
     tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
       base_tag:
-        description: "apache/superset base image tag to build from (e.g. 6.1.0)"
+        description: "apache/superset base image tag to build from (e.g. 7.0.0 or 7.0.0rc1)"
         required: true
         type: string
       image_tag:
-        description: "Tag to publish as (default: same as base_tag; use 6.1.0-2 for a rebuild on the same base)"
+        description: "Tag to publish as (default: same as base_tag; use 7.0.0-2 for a rebuild on the same base)"
         required: false
         type: string
       push_latest:
@@ -41,8 +41,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Playwright deps + chromium install make the first (uncached) build slow
-    timeout-minutes: 45
+    # The base image already ships Chromium; the build is a pip install plus a config copy.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -58,8 +58,8 @@ jobs:
             push)
               if [[ "${{ github.ref }}" == refs/tags/* ]]; then
                 ref="${{ github.ref_name }}"
-                if [[ ! "$ref" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9]+)?$ ]]; then
-                  echo "::error::git tag '$ref' must look like v6.1.0 or v6.1.0-2"; exit 1
+                if [[ ! "$ref" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?)(-[0-9]+)?$ ]]; then
+                  echo "::error::git tag '$ref' must look like v7.0.0, v7.0.0rc1 or v7.0.0-2"; exit 1
                 fi
                 base="${BASH_REMATCH[1]}"; image="${ref#v}"; publish=true
               else
