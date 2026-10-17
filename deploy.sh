@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_TAG=7.0.0rc1
+BASE_TAG=7.0.0rc2
 # Set PUSH_LATEST=false to publish only the version tag (always for a release candidate, or while a new
 # version is proven on dev first). CI (git tag v<version>) is the normal publish path; this script is the fallback.
 PUSH_LATEST=${PUSH_LATEST:-true}
