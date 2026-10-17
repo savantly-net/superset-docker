@@ -12,8 +12,8 @@ Rebuilding from a different Superset version is `--build-arg BASE_TAG=<apache/su
 Images are published by CI from git tags, never from merges:
 
 ```
-git tag -a v7.0.0rc1 -m "Superset 7.0.0rc1 image"
-git push origin v7.0.0rc1        # -> savantly/superset:7.0.0rc1 (built from apache/superset:7.0.0rc1)
+git tag -a v7.0.0rc2 -m "Superset 7.0.0rc2 image"
+git push origin v7.0.0rc2        # -> savantly/superset:7.0.0rc2 (built from apache/superset:7.0.0rc2)
 ```
 
 `vX.Y.Z-N` publishes a rebuild on the same Superset version. Version tags are immutable. `latest` only moves
