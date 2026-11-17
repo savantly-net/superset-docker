@@ -325,8 +325,14 @@ def _clause_is_contained(clause: str) -> bool:
     another PostgreSQL form: a backslash (`E'\''` ends the string at a place the scanner does not
     see) and a dollar sign (`$$'$$` is a string that holds a quote). This also refuses a clause
     that uses them for a good reason, which is the safe direction.
+
+    Superset renders the clause as a Jinja template before it wraps it (connectors/sqla/models.py,
+    ENABLE_TEMPLATE_PROCESSING is on here), so `{{ 'a = 0) OR (1=1' }}` is quoted text to this
+    scanner and SQL after the render. Each Jinja delimiter is refused, inside quotes too.
     """
     if "\\" in clause or "$" in clause:
+        return False
+    if "{{" in clause or "{%" in clause or "{#" in clause:
         return False
     depth = 0
     i = 0

@@ -60,9 +60,14 @@ scripts/test-lockdown-check.sh savantly/superset:ci-check
 - `GUEST_TOKEN_VALIDATOR_HOOK` refuses a guest token with no RLS rule, a rule that names a `dataset`, or a
   clause that is empty or breaks out of its parentheses. Each of these returns every row. The clause check
   skips single-quoted strings and double-quoted identifiers, and refuses any `\` or `$`, because
-  PostgreSQL's `E'…'` and `$$…$$` strings can end a quote where the check does not see it. Set
-  `GUEST_TOKEN_REQUIRE_RLS=false` only on an instance whose guest tokens may see all rows. Any other value,
+  PostgreSQL's `E'…'` and `$$…$$` strings can end a quote where the check does not see it. It also refuses
+  each Jinja delimiter (`{{`, `{%`, `{#`), because Superset renders the clause as a template first.
+- `GUEST_TOKEN_REQUIRE_RLS` turns the check off only for `false`, `0`, `no`, or `off` (any case, spaces
+  trimmed). Use one of these only on an instance whose guest tokens may see all rows. Each other value,
   an empty one included, keeps the check on.
+- Before you deploy this image onto an existing database, read the `Public` role in the UI and remove each
+  permission it holds. `PUBLIC_ROLE_LIKE = None` stops `superset init` from adding permissions, but it does
+  not remove the ones already stored. The lockdown check runs on a new database, so it cannot see them.
 
 ## Quickstart
 

@@ -105,6 +105,10 @@ VALIDATOR_CASES = [
     ([{"clause": "E'\\'' ) OR 1=1 -- '"}], False),
     ([{"clause": "\"a'\" ) OR 1=1 -- '"}], False),
     ([{"clause": "$$'$$ ) OR 1=1 -- '"}], False),
+    # Superset renders the clause as Jinja first; the quoted text becomes SQL.
+    ([{"clause": "{{ 'a = 0) OR (1=1' }}"}], False),
+    ([{"clause": "a = 1 {% if true %}{% endif %}"}], False),
+    ([{"clause": "a = 1 {# x #}"}], False),
 ]
 
 # GUEST_TOKEN_REQUIRE_RLS values, and whether each one turns the check off. Only an explicit
