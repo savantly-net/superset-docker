@@ -20,6 +20,22 @@ git push origin v7.0.0rc2        # -> savantly/superset:7.0.0rc2 (built from apa
 through the manual "Retag Docker image" workflow, after the version is proven in production, and never to a
 release candidate. Pin deployments by digest (the publish run summary prints the pin string).
 
+## Checks
+CI runs three checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
+
+```
+scripts/check-package-unmodified.sh apache/superset:7.0.0rc2 savantly/superset:ci-check
+scripts/test-package-check.sh 7.0.0rc2
+scripts/smoke-test.sh savantly/superset:ci-check
+```
+
+- `check-package-unmodified.sh` compares both copies of the `superset` package (site-packages and
+  `/app/superset`) in the built image with the base image, file by file, and fails on any change. The image
+  may add config, plugins and Python dependencies, but never write into the package.
+- `test-package-check.sh` builds `tests/fixtures/writes-into-package`, which writes into the package, and
+  fails unless the check fails on it.
+- `smoke-test.sh` starts the image with a throwaway Postgres and expects `200` from `/health`.
+
 ## Quickstart
 
 ```
