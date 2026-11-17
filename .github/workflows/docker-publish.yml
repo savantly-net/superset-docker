@@ -42,7 +42,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # The base image already ships Chromium; the build is a pip install plus a config copy.
-    timeout-minutes: 20
+    # The checks add a base-image pull, a fixture build, and a smoke test with Postgres.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -91,6 +92,32 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      # Every event runs the checks before anything can publish: a PR, a push to main, a tag, a manual run.
+      # This build loads the image into the local engine only; the publish step below reuses its cache.
+      - name: Build for the checks
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: |
+            BASE_TAG=${{ steps.tag.outputs.base_tag }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:ci-check
+          cache-from: type=gha
+
+      - name: Pull the base image for comparison
+        run: docker pull "apache/superset:${{ steps.tag.outputs.base_tag }}"
+
+      - name: Check that the image does not write into the superset package
+        run: scripts/check-package-unmodified.sh "apache/superset:${{ steps.tag.outputs.base_tag }}" "${IMAGE_NAME}:ci-check"
+
+      - name: Negative test of the package check
+        run: scripts/test-package-check.sh "${{ steps.tag.outputs.base_tag }}"
+
+      - name: Smoke test (GET /health returns 200)
+        run: scripts/smoke-test.sh "${IMAGE_NAME}:ci-check"
 
       - name: Login to Docker Hub
         if: steps.tag.outputs.publish == 'true'
