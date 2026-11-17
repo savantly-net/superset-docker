@@ -30,8 +30,10 @@ scripts/smoke-test.sh savantly/superset:ci-check
 ```
 
 - `check-package-unmodified.sh` compares both copies of the `superset` package (site-packages and
-  `/app/superset`) in the built image with the base image, file by file, and fails on any change. The image
-  may add config, plugins and Python dependencies, but never write into the package.
+  `/app/superset`) in the built image with the base image, file by file, and fails on any change. At build
+  time the image may add config, plugins and Python dependencies, but never write into the package. The check
+  does not see runtime writes: with `APP_ICON` set, `superset_config.py` downloads the logo into
+  `/app/superset/static/assets/images/`.
 - `test-package-check.sh` builds `tests/fixtures/writes-into-package`, which writes into the package, and
   fails unless the check fails on it.
 - `smoke-test.sh` starts the image with a throwaway Postgres and expects `200` from `/health`.
