@@ -5,7 +5,7 @@
 # Usage: scripts/test-lockdown-check.sh <image> [timeout-seconds]
 #
 # The faults, in one superset_config_docker.py:
-# 1. PUBLIC_ROLE_LIKE = "Gamma": anonymous callers get Gamma's read permissions.
+# 1. PUBLIC_ROLE_LIKE = "Gamma": anonymous callers get Gamma's permissions, writes included.
 # 2. The default CSRF exemption list: the guest-token route answers 400, not 401.
 # 3. No GUEST_TOKEN_VALIDATOR_HOOK.
 set -euo pipefail
@@ -39,6 +39,7 @@ expect() {
 expect '^FAIL [a-z_]+: ' "a route group open to Gamma's permissions"
 expect '^FAIL POST /api/v1/security/guest_token/ gave \[400\]' "the guest-token route without the CSRF exemption"
 expect '^FAIL GUEST_TOKEN_VALIDATOR_HOOK is not set' "the missing validator hook"
+expect '^FAIL the Public role holds [1-9]' "Gamma's permissions on the Public role, writes included"
 if [ "$missing" -ne 0 ]; then
   grep -E '^(PASS|FAIL|\{)' "$WORK/out.log" >&2 || tail -40 "$WORK/out.log" >&2
   exit 1

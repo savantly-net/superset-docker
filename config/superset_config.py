@@ -317,22 +317,30 @@ def _clause_is_contained(clause: str) -> bool:
 
     Superset writes each RLS clause into the query as `(<clause>)` and does not check it
     (security/api.py, a TODO). `a = 'A') OR (1=1` balances its parentheses but closes the outer
-    one early, so the depth goes below zero. Text inside single quotes is skipped ('' escapes a
-    quote). A statement separator or a comment outside quotes is refused too.
+    one early, so the depth goes below zero. Text inside single quotes (a string) and double
+    quotes (an identifier) is skipped; a doubled quote escapes it. A statement separator or a
+    comment outside quotes is refused too.
+
+    The scanner models only those two quote forms, so it refuses each character that starts
+    another PostgreSQL form: a backslash (`E'\''` ends the string at a place the scanner does not
+    see) and a dollar sign (`$$'$$` is a string that holds a quote). This also refuses a clause
+    that uses them for a good reason, which is the safe direction.
     """
+    if "\\" in clause or "$" in clause:
+        return False
     depth = 0
     i = 0
-    in_quote = False
+    quote = None  # the open quote character, ' or "
     while i < len(clause):
         ch = clause[i]
-        if in_quote:
-            if ch == "'":
-                if i + 1 < len(clause) and clause[i + 1] == "'":
+        if quote:
+            if ch == quote:
+                if i + 1 < len(clause) and clause[i + 1] == quote:
                     i += 1
                 else:
-                    in_quote = False
-        elif ch == "'":
-            in_quote = True
+                    quote = None
+        elif ch in ("'", '"'):
+            quote = ch
         elif ch == "(":
             depth += 1
         elif ch == ")":
@@ -342,7 +350,7 @@ def _clause_is_contained(clause: str) -> bool:
         elif ch == ";" or clause.startswith("--", i) or clause.startswith("/*", i):
             return False
         i += 1
-    return depth == 0 and not in_quote
+    return depth == 0 and quote is None
 
 
 def guest_token_validator(body: dict) -> bool:
@@ -369,7 +377,13 @@ def guest_token_validator(body: dict) -> bool:
     return True
 
 
-if str(get_env_variable("GUEST_TOKEN_REQUIRE_RLS", "true")).strip().lower() in ("1", "true", "yes"):
+def _rls_check_is_off(value) -> bool:
+    """Only an explicit false value turns the check off. An empty value, a typo, or any other
+    value keeps it on, so a bad template cannot open every row with no warning."""
+    return str(value).strip().lower() in ("0", "false", "no", "off")
+
+
+if not _rls_check_is_off(get_env_variable("GUEST_TOKEN_REQUIRE_RLS", "true")):
     GUEST_TOKEN_VALIDATOR_HOOK = guest_token_validator
 
 #

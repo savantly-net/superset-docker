@@ -45,7 +45,10 @@ scripts/test-lockdown-check.sh savantly/superset:ci-check
   too, and is counted apart. `scripts/lockdown_probe.py` names each other exception with its reason: the
   login, the database OAuth2 callback, and the routes that answer `404` while `THUMBNAILS` or
   `EMBEDDED_SUPERSET` is off. It also checks that the guest-token route answers `401` (the CSRF exemption)
-  and that the guest-token validator refuses its bad cases.
+  that the guest-token validator refuses its bad cases, that only an explicit false value of
+  `GUEST_TOKEN_REQUIRE_RLS` turns the validator off, and that the `Public` role holds no permission. The
+  last check reads the role itself: an anonymous write never reaches the permission check, so a `Public`
+  write permission does not show in the requests.
 - `test-lockdown-check.sh` breaks the lockdown three ways (`PUBLIC_ROLE_LIKE = "Gamma"`, no CSRF exemption,
   no validator hook) and fails unless the lockdown check fails on each.
 
@@ -55,8 +58,11 @@ scripts/test-lockdown-check.sh savantly/superset:ci-check
 - `superset.security.api.guest_token` is CSRF-exempt, so a service account can mint a guest token with a
   Bearer access token alone. The route still needs `can_grant_guest_token`.
 - `GUEST_TOKEN_VALIDATOR_HOOK` refuses a guest token with no RLS rule, a rule that names a `dataset`, or a
-  clause that is empty or breaks out of its parentheses. Each of these returns every row. Set
-  `GUEST_TOKEN_REQUIRE_RLS=false` only on an instance whose guest tokens may see all rows.
+  clause that is empty or breaks out of its parentheses. Each of these returns every row. The clause check
+  skips single-quoted strings and double-quoted identifiers, and refuses any `\` or `$`, because
+  PostgreSQL's `E'…'` and `$$…$$` strings can end a quote where the check does not see it. Set
+  `GUEST_TOKEN_REQUIRE_RLS=false` only on an instance whose guest tokens may see all rows. Any other value,
+  an empty one included, keeps the check on.
 
 ## Quickstart
 

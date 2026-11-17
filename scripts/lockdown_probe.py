@@ -100,7 +100,17 @@ VALIDATOR_CASES = [
     ([{"clause": "franchisee_id = 'A'; DROP TABLE x"}], False),
     ([{"clause": "franchisee_id = 'A' -- "}], False),
     ([{"clause": "franchisee_id = 'A"}], False),
+    ([{"clause": "\"location_key\" IN ('cl1')"}], True),
+    # PostgreSQL forms that end a quote where a single-quote scanner does not see it.
+    ([{"clause": "E'\\'' ) OR 1=1 -- '"}], False),
+    ([{"clause": "\"a'\" ) OR 1=1 -- '"}], False),
+    ([{"clause": "$$'$$ ) OR 1=1 -- '"}], False),
 ]
+
+# GUEST_TOKEN_REQUIRE_RLS values, and whether each one turns the check off. Only an explicit
+# false value may turn it off.
+FLAG_CASES = [("false", True), ("0", True), (" OFF ", True), ("no", True),
+              ("true", False), ("", False), ("ture", False), ("on", False)]
 
 
 def check_validator(app) -> list:
@@ -112,7 +122,25 @@ def check_validator(app) -> list:
         body = {"user": {"username": "probe"}, "resources": [], "rls": rls}
         if bool(hook(body)) is not expected:
             errors.append(f"validator gave {not expected} for rls={rls!r}")
+    # The config file is loaded by path and is not in sys.modules, so read the helper from the
+    # hook's own globals.
+    is_off = getattr(hook, "__globals__", {}).get("_rls_check_is_off")
+    if not callable(is_off):
+        return errors + ["_rls_check_is_off is not beside GUEST_TOKEN_VALIDATOR_HOOK"]
+    for value, off in FLAG_CASES:
+        if is_off(value) is not off:
+            errors.append(f"GUEST_TOKEN_REQUIRE_RLS={value!r} gave off={not off}")
     return errors
+
+
+def check_public_role(app) -> list:
+    """`Public` must hold no permission. A write permission does not show in the requests:
+    Flask-WTF refuses an anonymous write for its missing CSRF token before the permission
+    check runs."""
+    with app.app_context():
+        role = app.appbuilder.sm.find_role(app.config["AUTH_ROLE_PUBLIC"])
+        perms = sorted(str(p) for p in (role.permissions if role else []))
+    return [f"the Public role holds {len(perms)} permissions, e.g. {perms[:3]}"] if perms else []
 
 
 def main() -> int:
@@ -167,10 +195,12 @@ def main() -> int:
     if guest_token_codes != [401]:
         extra.append(f"POST {GUEST_TOKEN_RULE} gave {guest_token_codes}, not [401]")
     extra += check_validator(app)
+    extra += check_public_role(app)
     for line in extra:
         print(f"FAIL {line}")
     print(json.dumps({"routes": len(rules), "groups": len(groups), "failed_groups": failed,
-                      "other_failures": len(extra), "validator_cases": len(VALIDATOR_CASES)}))
+                      "other_failures": len(extra), "validator_cases": len(VALIDATOR_CASES),
+                      "flag_cases": len(FLAG_CASES)}))
     return 1 if failed or extra else 0
 
 
