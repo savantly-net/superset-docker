@@ -295,6 +295,83 @@ SMTP_PORT = os.getenv("SMTP_PORT",587)
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD","superset")
 SMTP_MAIL_FROM = os.getenv("SMTP_MAIL_FROM","noreply@savantly.cloud")
 
+# ---------------------------------------------------------------------------------------------
+# Lockdown (S5.4, NFR-2): the public endpoint accepts only a session or a guest token.
+# scripts/public-lockdown-check.sh proves it on each build.
+# ---------------------------------------------------------------------------------------------
+# An anonymous request runs as `Public`. `Public` copies no other role, so it holds no
+# permission. Do not set PUBLIC_ROLE_LIKE: it opens each copied permission to the internet.
+AUTH_ROLE_PUBLIC = "Public"
+PUBLIC_ROLE_LIKE = None
+
+# The guest-token route takes a Bearer access token, not a session, so it cannot carry a CSRF
+# token. Without this exemption, a Bearer-only caller gets 400 (spike T-4). The route still
+# needs `can_grant_guest_token`, so an anonymous call gets 401.
+from superset.config import WTF_CSRF_EXEMPT_LIST as _DEFAULT_CSRF_EXEMPT  # noqa: E402
+
+WTF_CSRF_EXEMPT_LIST = [*_DEFAULT_CSRF_EXEMPT, "superset.security.api.guest_token"]
+
+
+def _clause_is_contained(clause: str) -> bool:
+    """True when the clause cannot break out of the parentheses that Superset puts around it.
+
+    Superset writes each RLS clause into the query as `(<clause>)` and does not check it
+    (security/api.py, a TODO). `a = 'A') OR (1=1` balances its parentheses but closes the outer
+    one early, so the depth goes below zero. Text inside single quotes is skipped ('' escapes a
+    quote). A statement separator or a comment outside quotes is refused too.
+    """
+    depth = 0
+    i = 0
+    in_quote = False
+    while i < len(clause):
+        ch = clause[i]
+        if in_quote:
+            if ch == "'":
+                if i + 1 < len(clause) and clause[i + 1] == "'":
+                    i += 1
+                else:
+                    in_quote = False
+        elif ch == "'":
+            in_quote = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+        elif ch == ";" or clause.startswith("--", i) or clause.startswith("/*", i):
+            return False
+        i += 1
+    return depth == 0 and not in_quote
+
+
+def guest_token_validator(body: dict) -> bool:
+    """GUEST_TOKEN_VALIDATOR_HOOK: refuse a guest token that would not filter its rows.
+
+    Spike T-4 measured each of these refusals as a token that returns every row:
+    - an empty `rls` list;
+    - a rule with a `dataset` ID (a wrong ID makes BI drop the rule with no error);
+    - a clause that is empty, or that breaks out of its parentheses.
+    Set GUEST_TOKEN_REQUIRE_RLS=false only for an instance whose guest tokens may see all rows.
+    """
+    rules = body.get("rls") or []
+    if not rules:
+        logger.warning("guest token refused: no rls rule")
+        return False
+    for rule in rules:
+        if rule.get("dataset") is not None:
+            logger.warning("guest token refused: an rls rule names a dataset")
+            return False
+        clause = str(rule.get("clause") or "").strip()
+        if not clause or not _clause_is_contained(clause):
+            logger.warning("guest token refused: an rls clause is empty or not contained")
+            return False
+    return True
+
+
+if str(get_env_variable("GUEST_TOKEN_REQUIRE_RLS", "true")).strip().lower() in ("1", "true", "yes"):
+    GUEST_TOKEN_VALIDATOR_HOOK = guest_token_validator
+
 #
 # Optionally import superset_config_docker.py (which will have been included on
 # the PYTHONPATH) in order to allow for local settings to be overridden
