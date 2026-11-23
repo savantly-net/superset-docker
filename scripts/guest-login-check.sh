@@ -60,10 +60,10 @@ docker run -d --name "$DB" --network "$NETWORK" \
 
 echo "guest-login-check: waiting for Postgres"
 for _ in $(seq 1 60); do
-  docker exec "$DB" pg_isready -U superset -d superset >/dev/null 2>&1 && break
+  docker exec "$DB" pg_isready -h 127.0.0.1 -U superset -d superset >/dev/null 2>&1 && break
   sleep 1
 done
-docker exec "$DB" pg_isready -U superset -d superset >/dev/null
+docker exec "$DB" pg_isready -h 127.0.0.1 -U superset -d superset >/dev/null
 
 echo "guest-login-check: applying migrations and superset init"
 docker run --rm --network "$NETWORK" "${ENV_ARGS[@]}" "$IMAGE" \
