@@ -5,7 +5,8 @@
 # rig never pushes it. pythonpath/superset_config_docker.py is the rig override, which
 # config/superset_config.py imports last.
 #
-# Usage: rig/rig.sh up | down | status | psql
+# Usage: rig/rig.sh up | down | status | psql | embed | rls-plan | restart
+# compose.oauth.yml turns OAuth on for rig-superset (RIG_OAUTH=1 rig/rig.sh restart).
 name: franops-bi-rig
 
 x-superset: &superset
@@ -32,6 +33,8 @@ x-superset: &superset
     GUEST_TOKEN_JWT_SECRET: rig-guest-secret-not-for-production-0123456789
     FRANOPS_ORIGIN: ${RIG_FRANOPS_ORIGIN:-http://localhost:3000}
     ALERT_REPORTS: "false"
+    # The seeded fault of the RLS check (S5.6) sets RIG_GUEST_TOKEN_REQUIRE_RLS=false.
+    GUEST_TOKEN_REQUIRE_RLS: ${RIG_GUEST_TOKEN_REQUIRE_RLS:-true}
     SERVER_WORKER_AMOUNT: "1"
     RIG_ADMIN_PASSWORD: ${RIG_ADMIN_PASSWORD:-admin-rig-pass}
   volumes:

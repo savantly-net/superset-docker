@@ -42,8 +42,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # The base image already ships Chromium; the build is a pip install plus a config copy.
-    # The checks add a base-image pull, a fixture build, and a smoke test with Postgres.
-    timeout-minutes: 30
+    # The checks add a base-image pull, a fixture build, a smoke test with Postgres, and the rig.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -133,6 +133,18 @@ jobs:
 
       - name: Negative test of the service login and embed check
         run: scripts/test-guest-login-check.sh "${IMAGE_NAME}:ci-check"
+
+      # S5.6: the rig runs the image that the checks above built, so a tag checks what it publishes.
+      - name: Set up Python for the RLS check
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: RLS check (S5.6) - a guest token for one franchisee sees no row of another; fails on the seeded fault
+        run: |
+          pip install -e tools/franops_bi
+          docker tag "${IMAGE_NAME}:ci-check" franops-bi-rig/superset:local
+          RIG_SKIP_BUILD=1 rig/rls-check.sh
 
       - name: Login to Docker Hub
         if: steps.tag.outputs.publish == 'true'

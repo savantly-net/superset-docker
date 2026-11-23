@@ -1,0 +1,15 @@
+# OAuth mode for rig-superset (S5.6): the OAuth values of scripts/deployed-shape.env. The OAuth
+# endpoints are never called. With OAuth on, the API login with the `db` provider accepts the
+# service account only (S5.8), so the admin cannot log in through the API.
+# Usage: RIG_OAUTH=1 rig/rig.sh restart
+services:
+  rig-superset:
+    environment:
+      OAUTH_ENABLED: "true"
+      OAUTH_ISSUER: https://issuer.invalid
+      OAUTH_NAME: clerk
+      OAUTH_CLIENT_ID: check-client
+      OAUTH_CLIENT_SECRET: check-client-secret
+      OAUTH_TOKEN_ENDPOINT: https://issuer.invalid/oauth/token
+      OAUTH_AUTHORIZATION_ENDPOINT: https://issuer.invalid/oauth/authorize
+      EMBED_ORIGINS: https://portal.invalid

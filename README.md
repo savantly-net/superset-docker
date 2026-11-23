@@ -21,7 +21,7 @@ through the manual "Retag Docker image" workflow, after the version is proven in
 release candidate. Pin deployments by digest (the publish run summary prints the pin string).
 
 ## Checks
-CI runs eight checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
+CI runs nine checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
 
 ```
 scripts/check-package-unmodified.sh apache/superset:7.0.0rc2 savantly/superset:ci-check
@@ -32,6 +32,7 @@ scripts/test-lockdown-check.sh savantly/superset:ci-check
 scripts/public-lockdown-check.sh savantly/superset:ci-check 240 "" scripts/deployed-shape.env
 scripts/guest-login-check.sh savantly/superset:ci-check
 scripts/test-guest-login-check.sh savantly/superset:ci-check
+RIG_SKIP_BUILD=1 rig/rls-check.sh     # after: docker tag savantly/superset:ci-check franops-bi-rig/superset:local
 ```
 
 - `check-package-unmodified.sh` compares both copies of the `superset` package (site-packages and
@@ -61,6 +62,18 @@ scripts/test-guest-login-check.sh savantly/superset:ci-check
   service account with a second role are refused. It also reads the embed settings below from the app and from the `/login/` response.
 - `test-guest-login-check.sh` breaks it three ways (Superset's own security manager, `GUEST_ROLE_NAME =
   "Public"`, the default Talisman settings) and fails unless the check fails on each.
+- `rig/rls-check.sh` is the automated RLS check (S5.6, NFR-8). It starts the rig, deploys
+  `tests/fixtures/bi` with `franops-bi`, and `rig/rig.sh rls-plan` finds each chart tagged `certified`.
+  `scripts/rls_check.py` logs in as the service account, mints a guest token for franchisee A
+  (`location_key IN ('loc-001')`) on each dashboard that holds a certified chart, and calls
+  `POST /api/v1/chart/data`. It fails if a row has a key of another franchisee (exit 3), or if it cannot
+  judge (exit 1): no certified chart, a refused login or mint, a chart that answers other than `200`, an
+  empty answer, or rows with no `location_key`. It runs with OAuth off, then with OAuth on, on the same
+  metadata database. Its negative test turns the validator off (`GUEST_TOKEN_REQUIRE_RLS=false`), mints a
+  token with no `rls` rule, and fails unless the check exits 3. `scripts/rls_check.py` takes the URL, the
+  plan, the clause and the allowed keys as inputs. Its only planner is the rig's `rls-plan`, which also
+  rewrites the `GuestIssuer` and `Embed` roles and the service account, so a plan for another BI is
+  hand-made for now.
 
 ## Embedding and the service login
 `EMBEDDED_SUPERSET=true` turns embedding on (S5.8). Off, the image behaves as before. On, it needs:
