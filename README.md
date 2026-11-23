@@ -21,7 +21,7 @@ through the manual "Retag Docker image" workflow, after the version is proven in
 release candidate. Pin deployments by digest (the publish run summary prints the pin string).
 
 ## Checks
-CI runs five checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
+CI runs eight checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
 
 ```
 scripts/check-package-unmodified.sh apache/superset:7.0.0rc2 savantly/superset:ci-check
@@ -29,6 +29,9 @@ scripts/test-package-check.sh 7.0.0rc2
 scripts/smoke-test.sh savantly/superset:ci-check
 scripts/public-lockdown-check.sh savantly/superset:ci-check
 scripts/test-lockdown-check.sh savantly/superset:ci-check
+scripts/public-lockdown-check.sh savantly/superset:ci-check 240 "" scripts/deployed-shape.env
+scripts/guest-login-check.sh savantly/superset:ci-check
+scripts/test-guest-login-check.sh savantly/superset:ci-check
 ```
 
 - `check-package-unmodified.sh` compares both copies of the `superset` package (site-packages and
@@ -51,6 +54,29 @@ scripts/test-lockdown-check.sh savantly/superset:ci-check
   write permission does not show in the requests.
 - `test-lockdown-check.sh` breaks the lockdown three ways (`PUBLIC_ROLE_LIKE = "Gamma"`, no CSRF exemption,
   no validator hook) and fails unless the lockdown check fails on each.
+- The second lockdown run passes `scripts/deployed-shape.env`: OAuth and embedding on, with placeholder values.
+- `guest-login-check.sh` starts the image in the same shape and runs `scripts/guest_login_probe.py`. It sends
+  the broker's own login body for six cases (spike T-4): the service account gets `200`; another password
+  user, an OAuth user, a `GuestIssuer` user with Admin, a password user with the `ldap` provider, and the
+  service account with a second role are refused. It also reads the embed settings below from the app and from the `/login/` response.
+- `test-guest-login-check.sh` breaks it three ways (Superset's own security manager, `GUEST_ROLE_NAME =
+  "Public"`, the default Talisman settings) and fails unless the check fails on each.
+
+## Embedding and the service login
+`EMBEDDED_SUPERSET=true` turns embedding on (S5.8). Off, the image behaves as before. On, it needs:
+- `GUEST_TOKEN_JWT_SECRET`, the key of the guest tokens. The start stops with the variable's name when it is
+  missing.
+- `FRANOPS_ORIGIN`, and optionally `EMBED_ORIGINS` (spaces or commas): the origins that may frame BI. Each is a
+  scheme and a host only. They go into `frame-ancestors` and into the CORS origins. The image sends no
+  `X-Frame-Options` header while embedding is on, because `SAMEORIGIN` would block FranOps.
+
+The guest role is `Embed` and a guest token lives 300 seconds, on and off.
+
+With `OAUTH_ENABLED=true`, web login is OAuth only, and the API login with the `db` provider is open to one
+account: `BI_SERVICE_USERNAME` (default `franops_guest_issuer`), while its only role is `GUEST_ISSUER_ROLE`
+(default `GuestIssuer`). The FranOps broker logs in this way to mint guest tokens. Each other user gets `401`.
+Give the service account a password, the `GuestIssuer` role, and nothing else. A second role closes its login.
+`ALERT_REPORTS=false` turns the reports scheduler off, for an instance with no Redis.
 
 ## Lockdown
 `superset_config.py` keeps the public endpoint to sessions and guest tokens:
@@ -106,7 +132,8 @@ SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "...
 `franops-bi-rig/superset:local`, never pushed), a metadata Postgres, and a warehouse Postgres with the
 fixture tables `marts.calls_daily` (S5.5) and `embed.scorecard_fixture` (cuid location keys, for the
 fran-ops guest-token rig tests). Superset listens on `127.0.0.1:18388` (admin / `admin-rig-pass`). The
-rig sets `GUEST_ROLE_NAME = "Embed"`; it leaves the token lifetime at the image's value.
+rig turns embedding on through the image's own variables (`EMBEDDED_SUPERSET`, `FRANOPS_ORIGIN`). Its
+override sets only the caches, so the rig tests run on the image's embed settings (S5.8).
 
 The fran-ops guest-token broker (S6.2) has its rig tests in fran-ops. On a rig that the S5.5 tests do
 not need:

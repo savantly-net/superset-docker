@@ -2,11 +2,14 @@
 # Public lockdown check (S5.4, NFR-2): each /api/v1 route answers a request with no
 # credentials with 401 or 403.
 #
-# Usage: scripts/public-lockdown-check.sh <image> [timeout-seconds] [override.py]
+# Usage: scripts/public-lockdown-check.sh <image> [timeout-seconds] [override.py] [env-file]
 #
 # override.py, when given, is mounted as superset_config_docker.py, the file that
 # superset_config.py imports last. scripts/test-lockdown-check.sh uses it to break the lockdown
-# and expects this check to fail.
+# and expects this check to fail. Pass "" to give an env-file with no override.
+#
+# env-file, when given, goes to `docker run --env-file`. CI passes
+# scripts/deployed-shape.env, so the check also runs with OAuth and embedding on (S5.8).
 #
 # Like smoke-test.sh, it starts a throwaway Postgres on a private Docker network, applies the
 # migrations, and starts the image with its own CMD. It also runs `superset init`, which
@@ -19,6 +22,7 @@ set -euo pipefail
 IMAGE="${1:?usage: $0 <image> [timeout-seconds]}"
 TIMEOUT="${2:-240}"
 OVERRIDE="${3:-}"
+ENV_FILE="${4:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUN_ID="superset-lockdown-$$"
 NETWORK="$RUN_ID-net"
@@ -50,6 +54,9 @@ ENV_ARGS=(
   -e REDIS_HOST=redis.invalid
   -e REDIS_PORT=6379
 )
+if [ -n "$ENV_FILE" ]; then
+  ENV_ARGS+=(--env-file "$ENV_FILE")
+fi
 if [ -n "$OVERRIDE" ]; then
   ENV_ARGS+=(-v "$(cd "$(dirname "$OVERRIDE")" && pwd)/$(basename "$OVERRIDE"):/app/pythonpath/superset_config_docker.py:ro")
 fi

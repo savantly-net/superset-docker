@@ -27,7 +27,11 @@ x-superset: &superset
     REDIS_PORT: "6379"
     OAUTH_ENABLED: "false"
     AUTH_USER_REGISTRATION: "false"
+    # Embedding comes from the image (S5.8). The rig has no Redis, so reports are off.
+    EMBEDDED_SUPERSET: "true"
     GUEST_TOKEN_JWT_SECRET: rig-guest-secret-not-for-production-0123456789
+    FRANOPS_ORIGIN: ${RIG_FRANOPS_ORIGIN:-http://localhost:3000}
+    ALERT_REPORTS: "false"
     SERVER_WORKER_AMOUNT: "1"
     RIG_ADMIN_PASSWORD: ${RIG_ADMIN_PASSWORD:-admin-rig-pass}
   volumes:

@@ -125,6 +125,15 @@ jobs:
       - name: Negative test of the lockdown check
         run: scripts/test-lockdown-check.sh "${IMAGE_NAME}:ci-check"
 
+      - name: Public lockdown check, with OAuth and embedding on (S5.8)
+        run: scripts/public-lockdown-check.sh "${IMAGE_NAME}:ci-check" 240 "" scripts/deployed-shape.env
+
+      - name: Service login and embed check (S5.8, the T-4 login table)
+        run: scripts/guest-login-check.sh "${IMAGE_NAME}:ci-check"
+
+      - name: Negative test of the service login and embed check
+        run: scripts/test-guest-login-check.sh "${IMAGE_NAME}:ci-check"
+
       - name: Login to Docker Hub
         if: steps.tag.outputs.publish == 'true'
         uses: docker/login-action@v4
