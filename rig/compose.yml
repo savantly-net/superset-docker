@@ -78,6 +78,9 @@ services:
 
   rig-superset:
     <<: *superset
+    volumes:
+      - ./pythonpath:/app/pythonpath:ro
+      - ./embed:/rig-embed:ro
     depends_on:
       rig-init:
         condition: service_completed_successfully

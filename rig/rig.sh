@@ -5,6 +5,7 @@
 #        rig/rig.sh down     stop the stack and delete its volumes
 #        rig/rig.sh status
 #        rig/rig.sh psql     psql on the metadata database
+#        rig/rig.sh embed    seed the embed fixture of the fran-ops S6.2 rig tests; prints one JSON line
 # Ports (loopback only): Superset RIG_SUPERSET_PORT (18388), metadata DB RIG_META_PORT (18432).
 # The admin account is admin / RIG_ADMIN_PASSWORD (admin-rig-pass).
 set -euo pipefail
@@ -32,8 +33,12 @@ case "${1:-}" in
   psql)
     compose exec rig-meta psql -U superset -d superset
     ;;
+  embed)
+    # The output is the last line: RIGJSON {...}. Run it on a rig that the S5.5 tests do not need.
+    compose exec -T rig-superset python /rig-embed/setup_embed.py | sed -n 's/^RIGJSON //p'
+    ;;
   *)
-    echo "usage: $0 up|down|status|psql" >&2
+    echo "usage: $0 up|down|status|psql|embed" >&2
     exit 2
     ;;
 esac

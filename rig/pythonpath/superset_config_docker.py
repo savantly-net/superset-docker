@@ -21,3 +21,8 @@ GLOBAL_ASYNC_QUERIES = False
 
 # The rig turns on EMBEDDED_SUPERSET, and Superset refuses to start with the default secret.
 GUEST_TOKEN_JWT_SECRET = "rig-guest-secret-not-for-production-0123456789"
+
+# The guest role of `design/bi-image.md`. `rig/embed/setup_embed.py` grants it (S6.2 rig tests).
+# The rig does NOT set GUEST_TOKEN_JWT_EXP_SECONDS: the token lifetime that the rig measures is
+# the one that the shipped image gives.
+GUEST_ROLE_NAME = "Embed"

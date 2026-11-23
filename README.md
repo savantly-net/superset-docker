@@ -104,7 +104,21 @@ SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "...
 ### The rig
 `rig/compose.yml` runs the image that this repository's Dockerfile builds (local tag
 `franops-bi-rig/superset:local`, never pushed), a metadata Postgres, and a warehouse Postgres with the
-fixture table `marts.calls_daily`. Superset listens on `127.0.0.1:18388` (admin / `admin-rig-pass`).
+fixture tables `marts.calls_daily` (S5.5) and `embed.scorecard_fixture` (cuid location keys, for the
+fran-ops guest-token rig tests). Superset listens on `127.0.0.1:18388` (admin / `admin-rig-pass`). The
+rig sets `GUEST_ROLE_NAME = "Embed"`; it leaves the token lifetime at the image's value.
+
+The fran-ops guest-token broker (S6.2) has its rig tests in fran-ops. On a rig that the S5.5 tests do
+not need:
+
+```
+rig/rig.sh up && rig/rig.sh embed > /tmp/rig-embed.json
+# in fran-ops:
+FRANOPS_BI_RIG_EMBED=/tmp/rig-embed.json pnpm exec vitest run tests/integration/data-embed/guest-token-broker.rig.test.ts
+```
+
+`rig/embed/setup_embed.py` adds the dataset, an embedded dashboard, the `GuestIssuer` and `Embed` roles,
+and the service account `franops_guest_issuer`.
 
 ```
 pip install -e 'tools/franops_bi[test]'
