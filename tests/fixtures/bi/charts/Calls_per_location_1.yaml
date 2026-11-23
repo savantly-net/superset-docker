@@ -1,0 +1,24 @@
+slice_name: Calls per location
+description: null
+certified_by: null
+certification_details: null
+viz_type: table
+params:
+  datasource: 1__table
+  viz_type: table
+  query_mode: aggregate
+  groupby:
+  - location_key
+  metrics:
+  - expressionType: SIMPLE
+    aggregate: SUM
+    label: SUM(calls)
+    column:
+      column_name: calls
+  row_limit: 1000
+query_context: null
+cache_timeout: null
+uuid: 9ef54bbb-5731-4a70-95f8-c16fb5cf69bd
+version: 1.0.0
+dataset_uuid: 40f30f6d-2d79-411e-be3d-da1f69d94170
+tags: []

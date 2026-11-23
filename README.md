@@ -69,6 +69,54 @@ scripts/test-lockdown-check.sh savantly/superset:ci-check
   permission it holds. `PUBLIC_ROLE_LIKE = None` stops `superset init` from adding permissions, but it does
   not remove the ones already stored. The lockdown check runs on a new database, so it cannot see them.
 
+## Certified assets: `franops-bi`
+A brand repository keeps its certified datasets, charts, and dashboards in `bi/`, in Superset's export
+format: the exploded ZIP of `GET /api/v1/assets/export/` without its root folder (`metadata.yaml`,
+`databases/`, `datasets/`, `charts/`, `dashboards/`). `tests/fixtures/bi/` is an example, exported from the
+rig by `rig/make_fixture.py`.
+
+```
+pip install -e tools/franops_bi
+franops-bi validate --dir bi/
+SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
+  franops-bi deploy --dir bi/ --url https://bi.example.com --username deployer
+```
+
+- `validate` parses each YAML and exits 1 on a defect: a file that does not parse, a bad `metadata.yaml`,
+  a missing required key, a duplicate `uuid`, a reference to an asset that is not in the folder, or `tags`
+  on a database or a dataset.
+- `deploy` runs the same check, then rewrites a copy of each asset YAML and imports it with
+  `POST /api/v1/assets/import/` and `overwrite=true`. The source folder does not change. Each asset gets
+  `is_managed_externally: true`. Each chart and dashboard gets `tags: [certified]`, which replaces its tag
+  list: the import sets the object's tags to exactly that list.
+- Superset 7.0.0rc2 cannot import a tag on a dataset or a database: their import schemas refuse the
+  `tags` key, and the whole import fails. `deploy --tag-datasets` tags each dataset of the folder
+  `certified` through the tag API after the import. A later import keeps that tag.
+- The export masks each database password. Give it with `FRANOPS_BI_DB_PASSWORDS` (a JSON map from
+  `databases/<file>.yaml` to the password) or `--db-password databases/<file>.yaml=ENV_VAR`. An import onto
+  an existing database keeps its stored password.
+- Tags are written only with the `TAGGING_SYSTEM` feature flag on. `config/superset_config.py` does not
+  turn it on yet; the rig turns it on in `rig/pythonpath/superset_config_docker.py`.
+
+### The rig
+`rig/compose.yml` runs the image that this repository's Dockerfile builds (local tag
+`franops-bi-rig/superset:local`, never pushed), a metadata Postgres, and a warehouse Postgres with the
+fixture table `marts.calls_daily`. Superset listens on `127.0.0.1:18388` (admin / `admin-rig-pass`).
+
+```
+pip install -e 'tools/franops_bi[test]'
+python -m pytest tools/franops_bi/tests     # unit tests; the rig tests skip
+rig/test-franops-bi.sh                      # an empty rig, the rig tests, then `down --volumes`
+```
+
+The rig tests deploy `tests/fixtures/bi` into an empty instance and compare the count of each asset type
+with the folder (AC1). They deploy again and assert that nothing changed: the same id and uuid of each
+asset, the same tag rows, the same export content, the same `changed_on`, and no new row in the
+`*_version` history tables (AC2). A control deploy of a changed YAML shows that the import does write a
+change. They assert the `certified` tag on each chart and dashboard (AC3). The dataset case is an
+expected failure (`xfail`, strict) until the import can tag datasets. `.github/workflows/franops-bi.yml`
+runs the unit tests and `validate` on each pull request, and the rig tests after them.
+
 ## Quickstart
 
 ```

@@ -1,0 +1,94 @@
+# Local and CI rig (infrastructure row 10): the BI image, a metadata Postgres, and a warehouse
+# Postgres with fixtures. Azurite and moto belong to other stories (S1.12) and are not here.
+#
+# Superset runs the image that this repository's Dockerfile builds, under a local-only tag. The
+# rig never pushes it. pythonpath/superset_config_docker.py is the rig override, which
+# config/superset_config.py imports last.
+#
+# Usage: rig/rig.sh up | down | status | psql
+name: franops-bi-rig
+
+x-superset: &superset
+  build:
+    context: ..
+    args:
+      BASE_TAG: ${BASE_TAG:-7.0.0rc2}
+  image: franops-bi-rig/superset:local
+  pull_policy: never
+  environment:
+    SECRET_KEY: rig-secret-key-not-for-production-0123456789
+    DB_DIALECT: postgresql
+    DB_USER: superset
+    DB_PASSWORD: superset
+    DB_HOST: rig-meta
+    DB_PORT: "5432"
+    DB_NAME: superset
+    REDIS_HOST: redis.invalid
+    REDIS_PORT: "6379"
+    OAUTH_ENABLED: "false"
+    AUTH_USER_REGISTRATION: "false"
+    GUEST_TOKEN_JWT_SECRET: rig-guest-secret-not-for-production-0123456789
+    SERVER_WORKER_AMOUNT: "1"
+    RIG_ADMIN_PASSWORD: ${RIG_ADMIN_PASSWORD:-admin-rig-pass}
+  volumes:
+    - ./pythonpath:/app/pythonpath:ro
+
+services:
+  rig-meta:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+      POSTGRES_DB: superset
+    ports:
+      - "127.0.0.1:${RIG_META_PORT:-18432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 2s
+      retries: 30
+
+  rig-warehouse:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: warehouse
+      POSTGRES_PASSWORD: warehouse-rig-pass
+      POSTGRES_DB: warehouse
+    volumes:
+      - ./warehouse/seed.sql:/docker-entrypoint-initdb.d/10-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warehouse -d warehouse"]
+      interval: 2s
+      retries: 30
+
+  # One shot: the migrations, the admin account, and the default roles.
+  rig-init:
+    <<: *superset
+    depends_on:
+      rig-meta:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - >-
+        superset db upgrade &&
+        superset fab create-admin --username admin --firstname rig --lastname admin
+        --email admin@rig.invalid --password "$$RIG_ADMIN_PASSWORD" &&
+        superset init
+    restart: "no"
+
+  rig-superset:
+    <<: *superset
+    depends_on:
+      rig-init:
+        condition: service_completed_successfully
+      rig-warehouse:
+        condition: service_healthy
+    command: ["/app/docker/entrypoints/run-server.sh"]
+    ports:
+      - "127.0.0.1:${RIG_SUPERSET_PORT:-18388}:8088"
+    healthcheck:
+      test: ["CMD", "python", "-I", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/health', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 60
+      start_period: 20s
