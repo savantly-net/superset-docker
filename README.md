@@ -90,13 +90,16 @@ SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "...
   `is_managed_externally: true`. Each chart and dashboard gets `tags: [certified]`, which replaces its tag
   list: the import sets the object's tags to exactly that list.
 - Superset 7.0.0rc2 cannot import a tag on a dataset or a database: their import schemas refuse the
-  `tags` key, and the whole import fails. `deploy --tag-datasets` tags each dataset of the folder
-  `certified` through the tag API after the import. A later import keeps that tag.
+  `tags` key, and the whole import fails. So `deploy` tags each dataset of the folder `certified` through
+  the tag API after the import (`--no-tag-datasets` skips it). A later import keeps that tag. ⚠️ A deploy
+  never removes a dataset tag, and the deploy account needs write on Tag.
+- After the import, `deploy` reads the tags back and fails when a chart or a dashboard is not tagged
+  `certified`. On 7.0.0rc2 the API cannot read a dataset's tags, so for a dataset the check is the `201`
+  of the tag call.
 - The export masks each database password. Give it with `FRANOPS_BI_DB_PASSWORDS` (a JSON map from
   `databases/<file>.yaml` to the password) or `--db-password databases/<file>.yaml=ENV_VAR`. An import onto
   an existing database keeps its stored password.
-- Tags are written only with the `TAGGING_SYSTEM` feature flag on. `config/superset_config.py` does not
-  turn it on yet; the rig turns it on in `rig/pythonpath/superset_config_docker.py`.
+- Tags are written only with the `TAGGING_SYSTEM` feature flag on. `config/superset_config.py` turns it on.
 
 ### The rig
 `rig/compose.yml` runs the image that this repository's Dockerfile builds (local tag
@@ -113,8 +116,7 @@ The rig tests deploy `tests/fixtures/bi` into an empty instance and compare the 
 with the folder (AC1). They deploy again and assert that nothing changed: the same id and uuid of each
 asset, the same tag rows, the same export content, the same `changed_on`, and no new row in the
 `*_version` history tables (AC2). A control deploy of a changed YAML shows that the import does write a
-change. They assert the `certified` tag on each chart and dashboard (AC3). The dataset case is an
-expected failure (`xfail`, strict) until the import can tag datasets. `.github/workflows/franops-bi.yml`
+change. They assert the `certified` tag on each chart, dashboard, and dataset (AC3). `.github/workflows/franops-bi.yml`
 runs the unit tests and `validate` on each pull request, and the rig tests after them.
 
 ## Quickstart

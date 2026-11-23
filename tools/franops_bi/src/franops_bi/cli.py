@@ -51,26 +51,57 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+# The object types of Superset's tag API (ObjectType), and the list resource of each.
+OBJECT_TYPES = {"charts": ("chart", 2), "dashboards": ("dashboard", 3), "datasets": ("dataset", 4)}
+
+
+def ids_by_uuid(client: Superset, asset_type: str, bundle: b.Bundle) -> list[int]:
+    """The ids, in the BI instance, of the assets of one type of the bundle."""
+    wanted = {str(d["uuid"]) for d in bundle.assets(asset_type).values()}
+    resource = OBJECT_TYPES[asset_type][0]
+    return [
+        row["id"]
+        for row in client.list_all(resource, ["id", "uuid"])
+        if str(row.get("uuid")) in wanted
+    ]
+
+
 def tag_datasets(client: Superset, bundle: b.Bundle) -> list[int]:
     """Tag each dataset of the bundle `certified` through the tag API. Returns the dataset ids.
 
     The dataset import refuses `tags`, so the tag cannot travel in the YAML. A dataset import
     does not touch tag rows, so the tag stays through the next overwrite import.
+    ⚠️ A deploy never removes a dataset tag: a dataset that leaves bi/ keeps `certified`.
     """
-    wanted = {str(d["uuid"]) for d in bundle.assets("datasets").values()}
-    ids = [
-        row["id"]
-        for row in client.list_all("dataset", ["id", "uuid"])
-        if str(row.get("uuid")) in wanted
-    ]
+    ids = ids_by_uuid(client, "datasets", bundle)
     for dataset_id in ids:
         client.request(
             "POST",
-            f"/api/v1/tag/4/{dataset_id}/",  # 4 = ObjectType.dataset
+            f"/api/v1/tag/{OBJECT_TYPES['datasets'][1]}/{dataset_id}/",
             {"properties": {"tags": [b.CERTIFIED]}},
             expect=(200, 201),
         )
     return ids
+
+
+def untagged(client: Superset, bundle: b.Bundle, types: Sequence[str]) -> list[str]:
+    """Each asset of `types` in the bundle that the BI instance does not tag `certified`.
+
+    Reads the tag API back, so a deploy against an instance with TAGGING_SYSTEM off fails
+    instead of printing success with no tag written.
+    ⚠️ Charts and dashboards only: on 7.0.0rc2 `get_objects` never lists a dataset, and no
+    dataset endpoint returns its tags. For a dataset, the check is the 201 of the tag call.
+    """
+    body = client.get("/api/v1/tag/get_objects/", tags=b.CERTIFIED)
+    tagged = {(str(o.get("type")), int(o.get("id"))) for o in body.get("result", [])}
+    missing: list[str] = []
+    for asset_type in types:
+        name = OBJECT_TYPES[asset_type][0]
+        expected = ids_by_uuid(client, asset_type, bundle)
+        if len(expected) != len(bundle.assets(asset_type)):
+            missing.append(f"{asset_type}: {len(expected)} of {len(bundle.assets(asset_type))} found")
+        missing += [f"{asset_type} id={i}" for i in expected if (name, int(i)) not in tagged]
+    return missing
 
 
 def cmd_deploy(args: argparse.Namespace) -> int:
@@ -96,9 +127,20 @@ def cmd_deploy(args: argparse.Namespace) -> int:
         return 1
     counts = bundle.counts()
     print("imported: " + ", ".join(f"{n} {t}" for t, n in counts.items()))
+    types = list(b.TAGGED_TYPES)
     if args.tag_datasets:
         ids = tag_datasets(client, bundle)
         print(f"tagged {len(ids)} datasets {b.CERTIFIED} through the tag API")
+        if len(ids) != len(bundle.assets("datasets")):
+            print(f"error: {len(ids)} of {len(bundle.assets('datasets'))} datasets found after "
+                  "the import", file=sys.stderr)
+            return 1
+    missing = untagged(client, bundle, types)
+    if missing:
+        print(f"error: not tagged {b.CERTIFIED}: " + "; ".join(missing)
+              + " (is TAGGING_SYSTEM on?)", file=sys.stderr)
+        return 1
+    print(f"checked: each {', '.join(types)} asset is tagged {b.CERTIFIED}")
     return 0
 
 
@@ -123,8 +165,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     d.add_argument(
         "--tag-datasets",
-        action="store_true",
-        help="also tag each dataset `certified` through the tag API (the import cannot)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="tag each dataset `certified` through the tag API, because the import cannot "
+        "(default: on)",
     )
     d.add_argument("--zip-out", help="also write the rewritten ZIP to this path")
     d.set_defaults(func=cmd_deploy)

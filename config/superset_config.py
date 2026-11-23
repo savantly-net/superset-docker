@@ -262,7 +262,9 @@ CELERY_CONFIG = CeleryConfig
 FEATURE_FLAGS = {
     "ENABLE_TEMPLATE_PROCESSING": get_env_variable('ENABLE_TEMPLATE_PROCESSING', True),
     "DASHBOARD_NATIVE_FILTERS": get_env_variable('DASHBOARD_NATIVE_FILTERS', True),
-    "ALERT_REPORTS": True
+    "ALERT_REPORTS": True,
+    # The `draft` and `certified` tags (bi-image.md, S5.5). Off, an import writes no tag.
+    "TAGGING_SYSTEM": True,
 }
 ALERT_REPORTS_NOTIFICATION_DRY_RUN = True
 WEBDRIVER_BASEURL = "http://superset:8088/"

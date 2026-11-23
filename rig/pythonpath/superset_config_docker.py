@@ -1,7 +1,7 @@
 """Rig override. config/superset_config.py imports this file last.
 
-TAGGING_SYSTEM is on, because an import writes the `tags` list of a chart or a dashboard YAML
-only when the flag is on. config/superset_config.py does not turn it on yet. The rig has no
+This dict replaces FEATURE_FLAGS of config/superset_config.py, so it repeats TAGGING_SYSTEM,
+which the shipped config also turns on (S5.5). The rig has no
 Redis, so the caches are null and async queries are off.
 """
 

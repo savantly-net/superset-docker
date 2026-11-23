@@ -221,35 +221,19 @@ def test_ac3_each_database_and_dataset_is_managed_externally() -> None:
             assert r[3] == "t"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Superset 7.0.0rc2: the dataset import schema has no `tags` field "
-    "({'tags': ['Unknown field.']}) and the importer tags only charts and dashboards",
-)
 def test_ac3_each_dataset_has_the_certified_tag_after_a_plain_deploy() -> None:
+    # The import cannot tag a dataset; deploy tags it through the tag API (the default).
     for r in rows("datasets"):
         print(f"AC3 datasets id={r[0]} tags={tags_of('datasets', r[0])}")
         assert tags_of("datasets", r[0]) == ["certified"]
 
 
-def test_option_tag_datasets_through_the_api_survives_the_next_deploy() -> None:
-    """Evidence for the open choice: `deploy --tag-datasets` tags each dataset by API."""
-    assert deploy("--tag-datasets") == 0
+def test_without_tag_datasets_the_read_back_fails_until_the_tag_exists() -> None:
+    """`--no-tag-datasets` skips the tag API; the tag of the earlier deploy stays (a deploy never
+    removes a dataset tag), so the read-back still passes on this instance."""
+    assert deploy("--no-tag-datasets") == 0
     for r in rows("datasets"):
         assert tags_of("datasets", r[0]) == ["certified"]
-    # AC2 with the flag on: a second `--tag-datasets` deploy changes nothing either.
-    first = snapshot()
-    assert deploy("--tag-datasets") == 0
-    second = snapshot()
-    print(f"\noption: repeat --tag-datasets: tag rows equal={first['tags'] == second['tags']}, "
-          f"assets equal={first['assets'] == second['assets']}, "
-          f"versions equal={first['versions'] == second['versions']}")
-    assert first == second
-    assert deploy() == 0  # an overwrite import without the flag
-    for r in rows("datasets"):
-        tags = tags_of("datasets", r[0])
-        print(f"\noption: dataset id={r[0]} tags after a plain redeploy={tags}")
-        assert tags == ["certified"]
 
 
 def test_control_a_changed_yaml_does_update_the_asset(tmp_path: pathlib.Path) -> None:
