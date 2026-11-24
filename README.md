@@ -35,6 +35,7 @@ scripts/guest-login-check.sh savantly/superset:ci-check
 scripts/test-guest-login-check.sh savantly/superset:ci-check
 RIG_SKIP_BUILD=1 rig/rls-check.sh     # after: docker tag savantly/superset:ci-check franops-bi-rig/superset:local
 RIG_SKIP_BUILD=1 rig/oidc-login-check.sh
+RIG_SKIP_BUILD=1 rig/mcp-auth-check.sh
 ```
 
 - `check-no-provider-code.sh` fails when a line of `config/` or the `Dockerfile` names Clerk, the identity
@@ -114,6 +115,34 @@ and nothing is published. Merging the pull request publishes nothing either. Tes
   `X-Frame-Options` header while embedding is on, because `SAMEORIGIN` would block FranOps.
 
 The guest role is `Embed` and a guest token lives 300 seconds, on and off.
+
+## MCP (HQ questions)
+`superset mcp run --host 0.0.0.0 --port 5008` starts the MCP service of the image (S5.3), at `/mcp`. It
+reads the same configuration and metadata database as the web process. Auth is always on, so the service
+does not start until these are set:
+- `MCP_JWKS_URI`: the provider's JWKS. It is not derived from the issuer.
+- `MCP_JWT_AUDIENCE`: the BI URL. An MCP client sends `resource=<BI URL>` (RFC 8707), and the provider
+  writes it into `aud` (spike T-5 check 3). Separate more than one value with spaces or commas.
+- `MCP_JWT_ISSUER` defaults to `OIDC_ISSUER` or `OAUTH_ISSUER`. The token must hold the scope
+  `superset:read`.
+- `FRANOPS_URL` and `FRANOPS_BI_API_KEY`, as for the web login.
+
+The username of a token is `oidc:<sub>`, the user of the web login. At each resolution the image asks
+FranOps `userinfo` for the `sub`, and keeps an `HQ` answer for `MCP_ROLE_CACHE_SECONDS` (default `60`).
+Each other answer refuses the call, so a user whom FranOps no longer answers `HQ` for loses MCP within that
+time. An `HQ` user with no Superset user yet is made with the `HQ` role. The `HQ` role must exist. There
+is no API key, no guest token, no fixed user, and no client registration. The ten tools of spike B-2
+step 8 are off for each caller (`MCP_DISABLED_TOOLS`), among them `execute_sql`, `create_virtual_dataset`,
+and `create_dataset`. The FranOps call runs on the service's event loop, for at most
+`FRANOPS_TIMEOUT_SECONDS`.
+
+`rig/mcp-auth-check.sh` is the MCP check. It starts the rig with `rig/compose.mcp.yml`, runs
+`superset mcp run` inside `rig-superset`, and runs `rig/oidc/mcp_probe.py` there. The fake provider mints
+JWT access tokens in the shape of T-5 check 3. No token and each bad token (no or a wrong `aud`, a wrong
+`iss`, a foreign key, expired, no `superset:read`) get `401`. An HQ token runs as `oidc:<sub>`, and the
+action log row names that user. The disabled tools fail, also through the `call_tool` proxy of the tool
+search. A franchisee, a user whom FranOps answers `502` for, and a user demoted to `NONE` are refused.
+`/register` and the OAuth metadata get `404`. The MCP log holds no email, key, or token.
 
 ## Sign-in (OIDC)
 `OAUTH_ENABLED=true` turns web login to one generic OpenID Connect provider (S5.2). There is no password

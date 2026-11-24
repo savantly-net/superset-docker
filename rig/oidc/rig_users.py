@@ -23,4 +23,6 @@ USERS = {
     # The email of the rig admin (ab_user.email is unique): BI refuses the login before FAB's
     # insert fails, because FAB's error line would hold the email.
     "hq_email_taken": {"sub": "user_rigET0007", "email": "admin@rig.invalid", "biRole": "HQ"},
+    # The S5.3 MCP check: HQ at the first MCP call, then FranOps answers NONE for this user.
+    "mcp_demoted": {"sub": "user_rigMD0008", "email": "demoted.hq@rig-oidc.invalid", "biRole": "HQ"},
 }

@@ -7,6 +7,7 @@ fran-ops `app/api/data/bi/userinfo/route.ts` does:
   401 a missing or wrong key · 422 a missing sub · a user's `franopsStatus` (502) when it has one,
 after a user's `franopsDelay` seconds when it has one
 GET /_calls lists each call: the sub and whether the key was right, never the key itself.
+POST /_role?sub=<sub>&biRole=<role> changes the answer for one sub (the S5.3 demotion case).
 """
 
 import json
@@ -57,6 +58,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"biRole": "HQ", "organizationId": ORG, "userId": sub,
                                         "email": user.get("franopsEmail") or user.get("email")})
         return self.send_json(200, {"biRole": "NONE", "organizationId": ORG})
+
+    def do_POST(self):
+        url = urllib.parse.urlparse(self.path)
+        query = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+        if url.path != "/_role" or query.get("sub") not in BY_SUB:
+            return self.send_json(404, {"error": "not_found"})
+        BY_SUB[query["sub"]]["biRole"] = query.get("biRole", "NONE")
+        return self.send_json(200, {"ok": True})
 
     def log_message(self, fmt, *args):
         print(f"fake-franops: {self.command} {urllib.parse.urlparse(self.path).path}", flush=True)

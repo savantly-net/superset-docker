@@ -275,6 +275,19 @@ def oidc_user_info(claims: dict, franops: dict) -> dict:
     }
 
 
+def refuse_taken_email(sm, userinfo: dict) -> None:
+    """Raise LoginRefused when another Superset user has the email of `userinfo`.
+
+    ab_user.email is unique. FAB's insert of a second user with the same email fails, and FAB
+    logs the database error, which holds the email. The web login and the MCP resolver refuse
+    first.
+    """
+    if userinfo["email"]:
+        holder = sm.find_user(email=userinfo["email"])
+        if holder is not None and holder.username != userinfo["username"]:
+            raise LoginRefused("another Superset user has the same email")
+
+
 class CustomSsoSecurityManager(SupersetSecurityManager):
     def auth_user_db(self, username, password):
         """Under OAuth, the API password login is open to the service account only (S5.8).
@@ -309,12 +322,7 @@ class CustomSsoSecurityManager(SupersetSecurityManager):
             raise LoginRefused("the provider's claims have no sub")
         try:
             userinfo = oidc_user_info(dict(claims), franops_bi_role(sub))
-            # ab_user.email is unique. FAB's insert of a second user with the same email fails,
-            # and FAB logs the database error, which holds the email. Refuse first.
-            if userinfo["email"]:
-                holder = self.find_user(email=userinfo["email"])
-                if holder is not None and holder.username != userinfo["username"]:
-                    raise LoginRefused("another Superset user has the same email")
+            refuse_taken_email(self, userinfo)
         except LoginRefused as err:
             logger.warning("oauth login refused: provider=%s sub=%s: %s", provider, sub, err)
             raise
@@ -454,6 +462,121 @@ if embedding_enabled:
 
     CORS_OPTIONS = copy.deepcopy(_DEFAULT_CORS_OPTIONS)
     CORS_OPTIONS["origins"] = [*CORS_OPTIONS.get("origins", []), *embed_origins]
+
+
+# ---------------------------------------------------------------------------------------------
+# MCP (S5.3, design/bi-image.md section 2). `superset mcp run` reads this section; the web
+# process does not. Auth is always on: the MCP service does not start until MCP_JWKS_URI and
+# MCP_JWT_AUDIENCE are set, so it never starts open.
+# ---------------------------------------------------------------------------------------------
+MCP_AUTH_ENABLED = True
+# Each MCP caller has a token from the OIDC provider. No API key, no guest token, no fixed user.
+MCP_API_KEY_ENABLED = False
+MCP_EMBEDDED_GUEST_AUTH_ENABLED = False
+MCP_DEV_USERNAME = None
+MCP_JWT_ALGORITHM = "RS256"
+# The provider's issuer, as for the web login. The JWKS URI is configuration, not derived from
+# the issuer: the path differs from provider to provider.
+MCP_JWT_ISSUER = (
+    os.environ.get("MCP_JWT_ISSUER") or os.environ.get("OIDC_ISSUER") or os.environ.get("OAUTH_ISSUER") or ""
+).rstrip("/") or None
+MCP_JWKS_URI = os.environ.get("MCP_JWKS_URI") or None
+# The BI URL: an MCP client sends `resource=<BI URL>` (RFC 8707), and the provider writes it into
+# `aud` (spike T-5 check 3). Separate more than one value with spaces or commas.
+_mcp_audience = [a for a in os.environ.get("MCP_JWT_AUDIENCE", "").replace(",", " ").split() if a]
+MCP_JWT_AUDIENCE = (_mcp_audience[0] if len(_mcp_audience) == 1 else _mcp_audience) or None
+MCP_REQUIRED_SCOPES = ["superset:read"]
+# Spike B-2 step 8. The setting is global, so HQ loses these tools too. It includes the three
+# tools of decision D-8 (execute_sql, create_virtual_dataset, create_dataset).
+MCP_DISABLED_TOOLS = {
+    "find_users",
+    "execute_sql",
+    "get_chart_sql",
+    "open_sql_lab_with_context",
+    "list_rls_filters",
+    "get_rls_filter_info",
+    "list_users",
+    "get_user_info",
+    "create_virtual_dataset",
+    "create_dataset",
+}
+
+try:
+    MCP_ROLE_CACHE_SECONDS = max(0.0, float(os.environ.get("MCP_ROLE_CACHE_SECONDS", "60")))
+except ValueError:
+    MCP_ROLE_CACHE_SECONDS = 60.0
+# sub -> the monotonic time until which FranOps' HQ answer holds. Only an HQ answer is kept.
+_mcp_hq_until: dict = {}
+
+
+class MCPUserRefused(PermissionError):
+    """The MCP resolver refuses the token's user. Superset fails the call closed."""
+
+
+def mcp_user_resolver(app, access_token) -> str:
+    """MCP_USER_RESOLVER: the Superset username of one verified MCP token (S5.3).
+
+    The username is `oidc:<sub>`, the same user as the web login (S5.2). The resolver asks
+    FranOps for the BI role of `sub` at each resolution, and keeps an HQ answer for
+    MCP_ROLE_CACHE_SECONDS. A web login that FranOps refuses does not sync the roles, so a user
+    that FranOps no longer answers HQ for would keep HQ through MCP without this call. Each
+    answer other than HQ refuses the call. An HQ user with no Superset user yet is created with
+    the HQ role, and an HQ user without the HQ role gets it again.
+
+    The resolver runs on the MCP event loop, so the FranOps call blocks it for at most
+    FRANOPS_TIMEOUT_SECONDS. Nothing here logs a claim other than `sub`, an email, or a token.
+    """
+    claims = getattr(access_token, "claims", None)
+    claims = dict(claims) if isinstance(claims, dict) else {}
+    sub = str(claims.get("sub") or "").strip()
+    if not sub:
+        raise MCPUserRefused("the token has no sub")
+    username = f"oidc:{sub}"
+
+    import time
+
+    if _mcp_hq_until.get(sub, 0.0) > time.monotonic():
+        return username
+    _mcp_hq_until.pop(sub, None)
+
+    from superset import security_manager as sm
+    from superset.extensions import db
+
+    try:
+        userinfo = oidc_user_info(claims, franops_bi_role(sub))
+        refuse_taken_email(sm, userinfo)
+        hq = sm.find_role(FRANOPS_BI_ROLES["HQ"])
+        if hq is None:
+            raise LoginRefused("the HQ role does not exist")
+        user = sm.find_user(username=username)
+        if user is None:
+            created = sm.add_user(
+                username, userinfo["first_name"] or username, userinfo["last_name"] or "-",
+                userinfo["email"] or f"{sub}@oidc.invalid", [hq],
+            )
+            if not created:
+                # Another worker made the user first; FAB rolled its own insert back.
+                db.session.rollback()
+                user = sm.find_user(username=username)
+                if user is None:
+                    raise LoginRefused("the user could not be created")
+            else:
+                logger.info("mcp user created: sub=%s role_keys=%s", sub, userinfo["role_keys"])
+        if user is not None and hq not in user.roles:
+            # The web login's sync gives the mapped role and the registration role only.
+            user.roles = [hq, *[r for r in user.roles if r.name == AUTH_USER_REGISTRATION_ROLE]]
+            db.session.commit()
+            logger.info("mcp user role synced: sub=%s role_keys=%s", sub, userinfo["role_keys"])
+    except LoginRefused as err:
+        logger.warning("mcp user refused: sub=%s: %s", sub, err)
+        raise MCPUserRefused(str(err)) from None
+
+    if MCP_ROLE_CACHE_SECONDS > 0:
+        _mcp_hq_until[sub] = time.monotonic() + MCP_ROLE_CACHE_SECONDS
+    return username
+
+
+MCP_USER_RESOLVER = mcp_user_resolver
 
 
 # Email configuration

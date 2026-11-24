@@ -159,6 +159,9 @@ jobs:
       - name: OIDC login check (S5.2) - an HQ user signs in with HQ, a franchisee is refused, no password form
         run: RIG_SKIP_BUILD=1 rig/oidc-login-check.sh
 
+      - name: MCP auth check (S5.3) - no token is 401, an HQ token runs as that user, the D-8 tools fail, no registration
+        run: RIG_SKIP_BUILD=1 rig/mcp-auth-check.sh
+
       - name: Login to Docker Hub
         if: steps.tag.outputs.publish == 'true'
         uses: docker/login-action@v4

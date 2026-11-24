@@ -9,6 +9,11 @@ no role and no preferred_username, signed RS256 with a key made at start. A user
 The authorize endpoint shows no sign-in page. The test driver adds `rig_user=<name>` to the
 authorize URL, and the endpoint redirects to the callback with a code for that user.
 GET /_issued lists the tokens that it issued, so the check can look for them in the logs.
+POST /_mint makes a JWT access token in the shape that spike T-5 check 3 measured on the MVP
+provider (`out/email-resource.json`): RS256, `iss`, `sub`, `aud` (the `resource` of RFC 8707),
+`scope` as one string, `client_id`, `org_id`, and no email. The S5.3 MCP check sends a JSON body
+`{"user", "aud", "scope", "iss", "exp_in", "foreign_key"}`; each key but `user` is optional, and
+`aud: null` leaves the claim out. `foreign_key: true` signs with a key that is not in the JWKS.
 
 Env: FAKE_OIDC_ISSUER (http://rig-fake-oidc:8080), FAKE_OIDC_CLIENT_ID, FAKE_OIDC_CLIENT_SECRET,
 FAKE_OIDC_PORT (8080).
@@ -35,6 +40,7 @@ PORT = int(os.environ.get("FAKE_OIDC_PORT", "8080"))
 KID = "rig-oidc-key-1"
 
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+FOREIGN_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 PUBLIC_JWK = {**json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(KEY.public_key())), "kid": KID, "use": "sig", "alg": "RS256"}
 
 CODES = {}  # code -> {user, nonce, redirect_uri, client_id}
@@ -117,10 +123,29 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, claims_of(ACCESS[token]))
         return self.send_json(404, {"error": "not_found"})
 
+    def mint(self, body):
+        name = body.get("user")
+        if name not in USERS:
+            return self.send_json(400, {"error": "unknown user"})
+        now = int(time.time())
+        payload = {"iss": body.get("iss", ISSUER), "sub": USERS[name]["sub"], "client_id": "rig-mcp-client",
+                   "org_id": "org_rig0001", "iat": now, "nbf": now - 5,
+                   "exp": now + int(body.get("exp_in", 300)), "jti": "oat_" + secrets.token_urlsafe(8),
+                   "scope": body.get("scope", "openid email profile superset:read")}
+        if body.get("aud", "absent") is not None:
+            payload["aud"] = body.get("aud", ISSUER)
+        key = FOREIGN_KEY if body.get("foreign_key") else KEY
+        token = jwt.encode(payload, key, algorithm="RS256", headers={"kid": KID})
+        ISSUED.append(token)
+        return self.send_json(200, {"access_token": token})
+
     def do_POST(self):
-        if urllib.parse.urlparse(self.path).path != "/token":
-            return self.send_json(404, {"error": "not_found"})
+        path = urllib.parse.urlparse(self.path).path
         length = int(self.headers.get("Content-Length") or 0)
+        if path == "/_mint":
+            return self.mint(json.loads(self.rfile.read(length) or b"{}"))
+        if path != "/token":
+            return self.send_json(404, {"error": "not_found"})
         form = {k: v[0] for k, v in urllib.parse.parse_qs(self.rfile.read(length).decode()).items()}
         client_id, client_secret = form.get("client_id"), form.get("client_secret")
         auth = self.headers.get("Authorization", "")
