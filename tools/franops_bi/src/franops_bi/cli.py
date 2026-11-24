@@ -2,6 +2,7 @@
 
     franops-bi validate --dir bi/
     franops-bi deploy   --dir bi/ --url https://bi.example.com
+    franops-bi certify  chart 42 --repo ../brand --url https://bi.example.com
 
 Credentials come from flags or the environment:
     SUPERSET_URL, SUPERSET_USERNAME, SUPERSET_PASSWORD
@@ -18,6 +19,7 @@ import sys
 from typing import Sequence
 
 from . import bundle as b
+from .certify import TYPES, CertifyError, certify
 from .client import Superset, SupersetError
 
 
@@ -92,8 +94,7 @@ def untagged(client: Superset, bundle: b.Bundle, types: Sequence[str]) -> list[s
     ⚠️ Charts and dashboards only: on 7.0.0rc2 `get_objects` never lists a dataset, and no
     dataset endpoint returns its tags. For a dataset, the check is the 201 of the tag call.
     """
-    body = client.get("/api/v1/tag/get_objects/", tags=b.CERTIFIED)
-    tagged = {(str(o.get("type")), int(o.get("id"))) for o in body.get("result", [])}
+    tagged = {(str(o.get("type")), int(o.get("id"))) for o in client.tagged_objects(b.CERTIFIED)}
     missing: list[str] = []
     for asset_type in types:
         name = OBJECT_TYPES[asset_type][0]
@@ -144,6 +145,25 @@ def cmd_deploy(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_certify(args: argparse.Namespace) -> int:
+    if not args.url:
+        raise SystemExit("certify: set --url or SUPERSET_URL")
+    if not args.password:
+        raise SystemExit("certify: set --password or SUPERSET_PASSWORD")
+    client = Superset(args.url, args.username, args.password)
+    try:
+        result = certify(client, args.type, args.id, args.repo)
+    except CertifyError as err:
+        print(f"error: {err}", file=sys.stderr)
+        if not err.changed_bi:
+            print("BI and the repository did not change", file=sys.stderr)
+        return 1
+    done = "swapped draft for certified" if result.swapped else "was certified already"
+    print(f"{args.type} {args.id}: {done}; wrote {result.path} on the branch {result.branch}")
+    print("next: push the branch and open the pull request")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="franops-bi", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="command", required=True)
@@ -172,6 +192,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     d.add_argument("--zip-out", help="also write the rewritten ZIP to this path")
     d.set_defaults(func=cmd_deploy)
+
+    c = sub.add_parser(
+        "certify",
+        help="as a reviewer, swap draft for certified and export the asset into bi/ on a branch",
+    )
+    c.add_argument("type", choices=sorted(TYPES))
+    c.add_argument("id", type=int)
+    c.add_argument("--repo", required=True, help="the brand repository; its bi/ folder gets the YAML")
+    c.add_argument("--url", default=os.environ.get("SUPERSET_URL"))
+    c.add_argument("--username", default=os.environ.get("SUPERSET_USERNAME", "admin"))
+    c.add_argument("--password", default=os.environ.get("SUPERSET_PASSWORD"))
+    c.set_defaults(func=cmd_certify)
     return p
 
 

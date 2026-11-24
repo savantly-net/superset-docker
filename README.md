@@ -147,11 +147,31 @@ search. A franchisee, a user whom FranOps answers `502` for, and a user demoted 
 
 `rig/hq-access-check.sh` is the HQ access and draft check (S7.1, S7.3). It deploys `tests/fixtures/bi`,
 gives `HQ` the grants of the design (rig only: nothing in the image makes the role yet), and runs
-`rig/oidc/hq_probe.py` over MCP. An HQ chart on a certified dataset is made and gets `draft` at once, and so
+`rig/oidc/hq_probe.py` over MCP. Then `rig/certify_check.py` runs the S7.4 and S7.5 checks with OAuth off:
+the certified view as an HQ user with a password, `certify` as HQ (refused) and as the admin, and a
+deploy of the certify branch whose re-export equals the file. An HQ chart on a certified dataset is made and gets `draft` at once, and so
 does a dashboard. `create_dataset` and `create_virtual_dataset` are not there, and `generate_chart` on a
 dataset of the raw table answers "not found" and makes no chart; with a grant on that dataset, the same call
 makes one. A second deploy keeps `certified` on the certified assets, and the hook never tags an imported
 asset. The rig's tokens carry `superset:write`, which a write tool needs.
+
+## Certify a draft (S7.5)
+`franops-bi certify chart|dashboard <id> --repo <brand repository>` runs as a reviewer: an account that BI
+lets write tags on another user's asset, which is `Admin` (Savantly operators, decision D-6). In order:
+it checks that the repository is a clean git work tree with a valid `bi/` and no branch
+`certify/<type>-<id>`; it exports the asset, and stops unless `bi/` already holds what it refers to (the
+dataset of a chart, each chart of a dashboard: certify the charts first); it removes `draft`, then adds
+`certified`, and reads them back; it writes the YAML with `tags: [certified]` into `bi/` (over the file of
+the same UUID, if there is one) on the new branch, and commits it. It never pushes: the reviewer opens the
+pull request, and the merge plus `deploy` makes the asset managed. `HQ` cannot export or write tags, so
+an HQ account stops at the export and nothing changes. ⚠️ It logs in with the `db` provider, as `deploy`
+does; in OAuth mode BI accepts that login for the guest-token service account only.
+
+## The certified view (S7.4)
+The certified view is Superset's own tag page, `/all_entities/?id=<the id of the tag certified>`, and its
+API `GET /api/v1/tag/get_objects/?tags=certified`. An HQ user opens both with `can_read` on Tag. The chart
+and dashboard list APIs return each asset's tags, so each draft carries the label `draft`. Superset lists
+an unpublished dashboard to its editors only, so an HQ user sees no draft dashboard of another HQ user.
 
 ## Drafts
 `config/draft_hook.py` tags each new chart and dashboard `draft` (S7.3, spike T-3), unless an import
@@ -219,6 +239,7 @@ rig by `rig/make_fixture.py`.
 ```
 pip install -e tools/franops_bi
 franops-bi validate --dir bi/
+SUPERSET_PASSWORD=... franops-bi certify chart 42 --repo ../brand --url https://bi.example.com
 SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
   franops-bi deploy --dir bi/ --url https://bi.example.com --username deployer
 ```
@@ -235,7 +256,8 @@ SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "...
   the tag API after the import (`--no-tag-datasets` skips it). A later import keeps that tag. ⚠️ A deploy
   never removes a dataset tag, and the deploy account needs write on Tag.
 - After the import, `deploy` reads the tags back and fails when a chart or a dashboard is not tagged
-  `certified`. On 7.0.0rc2 the API cannot read a dataset's tags, so for a dataset the check is the `201`
+  `certified`. ⚠️ `get_objects` reads plain query arguments (`?tags=certified`). Before S7.5 the tool
+  sent Rison, the endpoint ignored the filter, and this check could not fail. On 7.0.0rc2 the API cannot read a dataset's tags, so for a dataset the check is the `201`
   of the tag call.
 - The export masks each database password. Give it with `FRANOPS_BI_DB_PASSWORDS` (a JSON map from
   `databases/<file>.yaml` to the password) or `--db-password databases/<file>.yaml=ENV_VAR`. An import onto

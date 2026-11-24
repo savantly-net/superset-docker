@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The S7.1 and S7.3 check on the rig, end to end: what HQ reaches over MCP, and the draft tag.
+# The S7.1, S7.3, S7.4 and S7.5 check on the rig: what HQ reaches over MCP, the draft tag, the
+# certified view, and franops-bi certify.
 #
 # Usage: rig/hq-access-check.sh            (KEEP=1 leaves the rig up afterwards)
 # Needs Docker, python3, and franops-bi (pip install -e tools/franops_bi).
@@ -13,6 +14,8 @@
 #    a dataset or a chart on the raw table is refused; the certified assets are not drafts.
 # 4. rig-superset restarts with OAuth off, and franops-bi deploys the fixture again. The probe's
 #    second phase: the certified assets keep `certified` and get no `draft`; the drafts stay.
+# 5. OAuth off once more. rig/certify_check.py: HQ's certified view and draft labels (S7.4), and
+#    franops-bi certify as HQ and as the reviewer, then a deploy of its branch (S7.5).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -105,4 +108,26 @@ deploy
 no_draft_from_deploy "the second deploy"
 full up --detach --no-deps --force-recreate --wait --wait-timeout "${RIG_TIMEOUT:-420}" rig-superset
 full exec -T -w /rig-oidc -e HQ_PROBE_PHASE=redeploy rig-superset python /rig-oidc/hq_probe.py
-echo "PASS: the HQ access and draft check"
+
+echo "== The certified view and franops-bi certify (S7.4, S7.5)"
+# certify logs in with the db provider, as deploy does, so OAuth is off again. rig_hq_db is an
+# HQ user with a password: the checks run through the HQ grants that the probe gave the role.
+base up --detach --no-deps --force-recreate --wait --wait-timeout "${RIG_TIMEOUT:-420}" rig-superset
+base exec -T rig-superset superset fab create-user --role HQ --username rig_hq_db \
+  --firstname Rig --lastname HQ --email hq.db@rig.invalid --password hq-db-rig-pass >/dev/null
+# A REST client reads the CSRF token from /api/v1/security/csrf_token/, which HQ cannot read: a
+# browser gets it in the page. RigCsrf holds that one grant, so the HQ role stays as designed.
+base exec -T rig-superset python -c '
+from superset.app import create_app
+app = create_app()
+with app.app_context():
+    from superset.extensions import db
+    sm = app.appbuilder.sm
+    role = sm.find_role("RigCsrf") or sm.add_role("RigCsrf")
+    sm.add_permission_role(role, sm.find_permission_view_menu("can_read", "SecurityRestApi"))
+    user = sm.find_user(username="rig_hq_db")
+    user.roles = [sm.find_role("HQ"), role]
+    db.session.commit()
+' >/dev/null 2>&1
+python3 rig/certify_check.py
+echo "PASS: the HQ access, draft, certified view and certify check"

@@ -25,9 +25,9 @@ class FakeClient:
     def list_all(self, resource: str, columns: list[str]) -> list[dict[str, Any]]:
         return [{"id": i + 1, "uuid": u} for i, u in enumerate(self.uuids[resource])]
 
-    def get(self, path: str, **query: Any) -> Any:
-        assert path == "/api/v1/tag/get_objects/" and query == {"tags": "certified"}
-        return {"result": self.tagged}
+    def tagged_objects(self, tag: str) -> list[dict[str, Any]]:
+        assert tag == "certified"
+        return self.tagged
 
 
 ALL = [{"type": "chart", "id": 1}, {"type": "dashboard", "id": 1}, {"type": "dataset", "id": 1}]
@@ -56,3 +56,14 @@ def test_an_asset_missing_from_the_instance_fails() -> None:
     client = FakeClient(bundle, ALL)
     client.uuids["chart"] = []
     assert untagged(client, bundle, ["charts"]) == ["charts: 0 of 1 found"]
+
+
+def test_tagged_objects_sends_a_plain_query_argument_not_rison():
+    """get_objects reads `?tags=`; with Rison it ignores the filter and lists each tagged object."""
+    from franops_bi.client import Superset
+
+    client = Superset.__new__(Superset)
+    seen: list[str] = []
+    client.request = lambda method, path, *a, **k: (seen.append(path), (200, {"result": []}))[1]
+    assert client.tagged_objects("certified") == []
+    assert seen == ["/api/v1/tag/get_objects/?tags=certified"]
