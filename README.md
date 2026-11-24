@@ -36,6 +36,7 @@ scripts/test-guest-login-check.sh savantly/superset:ci-check
 RIG_SKIP_BUILD=1 rig/rls-check.sh     # after: docker tag savantly/superset:ci-check franops-bi-rig/superset:local
 RIG_SKIP_BUILD=1 rig/oidc-login-check.sh
 RIG_SKIP_BUILD=1 rig/mcp-auth-check.sh
+RIG_SKIP_BUILD=1 rig/hq-access-check.sh
 ```
 
 - `check-no-provider-code.sh` fails when a line of `config/` or the `Dockerfile` names Clerk, the identity
@@ -143,6 +144,21 @@ JWT access tokens in the shape of T-5 check 3. No token and each bad token (no o
 action log row names that user. The disabled tools fail, also through the `call_tool` proxy of the tool
 search. A franchisee, a user whom FranOps answers `502` for, and a user demoted to `NONE` are refused.
 `/register` and the OAuth metadata get `404`. The MCP log holds no email, key, or token.
+
+`rig/hq-access-check.sh` is the HQ access and draft check (S7.1, S7.3). It deploys `tests/fixtures/bi`,
+gives `HQ` the grants of the design (rig only: nothing in the image makes the role yet), and runs
+`rig/oidc/hq_probe.py` over MCP. An HQ chart on a certified dataset is made and gets `draft` at once, and so
+does a dashboard. `create_dataset` and `create_virtual_dataset` are not there, and `generate_chart` on a
+dataset of the raw table answers "not found" and makes no chart; with a grant on that dataset, the same call
+makes one. A second deploy keeps `certified` on the certified assets, and the hook never tags an imported
+asset. The rig's tokens carry `superset:write`, which a write tool needs.
+
+## Drafts
+`config/draft_hook.py` tags each new chart and dashboard `draft` (S7.3, spike T-3), unless an import
+from the brand repository made it (`is_managed_externally`). `FLASK_APP_MUTATOR` installs it in each
+process that builds the app: the web workers, `superset mcp run`, Celery, and the CLI. A
+`superset_config_docker.py` that sets its own `FLASK_APP_MUTATOR` replaces the hook, so that mutator must
+call `_install_draft_hook(app)`.
 
 ## Sign-in (OIDC)
 `OAUTH_ENABLED=true` turns web login to one generic OpenID Connect provider (S5.2). There is no password

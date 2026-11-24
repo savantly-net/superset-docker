@@ -686,6 +686,31 @@ def _rls_check_is_off(value) -> bool:
 if not _rls_check_is_off(get_env_variable("GUEST_TOKEN_REQUIRE_RLS", "true")):
     GUEST_TOKEN_VALIDATOR_HOOK = guest_token_validator
 
+
+# ---------------------------------------------------------------------------------------------
+# Drafts (S7.3, design/bi-image.md section 5; spike T-3). Each new chart and dashboard gets the
+# tag `draft`, unless an import from the brand repository made it (`is_managed_externally`).
+# rig/hq-access-check.sh proves it on each build. The hook sits beside this file in the image
+# (/app/draft_hook.py). A superset_config_docker.py that sets FLASK_APP_MUTATOR replaces the
+# hook: call _install_draft_hook(app) from that mutator.
+# ---------------------------------------------------------------------------------------------
+def _install_draft_hook(app) -> None:
+    import importlib.util
+    import sys
+
+    # One module for each process, so that the module's own guard stops a second install.
+    module = sys.modules.get("franops_draft_hook")
+    if module is None:
+        path = Path(__file__).with_name("draft_hook.py")
+        spec = importlib.util.spec_from_file_location("franops_draft_hook", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules["franops_draft_hook"] = module
+    module.install(app)
+
+
+FLASK_APP_MUTATOR = _install_draft_hook
+
 #
 # Optionally import superset_config_docker.py (which will have been included on
 # the PYTHONPATH) in order to allow for local settings to be overridden

@@ -27,3 +27,16 @@ INSERT INTO embed.scorecard_fixture VALUES
   ('A', 'crigloca00000000000000002', 20),
   ('B', 'criglocb00000000000000001', 40),
   ('B', 'criglocb00000000000000002', 50);
+
+-- A raw table (S7.1): the BI must not reach it. A deployed warehouse keeps it from the BI with
+-- grants (franops-data-agent warehouse/grants.sql); the rig connects as the owner, so the S7.1
+-- check proves the Superset half only: HQ has no grant on a dataset of this table.
+CREATE SCHEMA raw_callrail;
+CREATE TABLE raw_callrail.calls (
+  id            text PRIMARY KEY,
+  location_key  text NOT NULL,
+  caller_number text NOT NULL
+);
+INSERT INTO raw_callrail.calls VALUES
+  ('CAL1', 'loc-001', '+15550000001'),
+  ('CAL2', 'loc-002', '+15550000002');
