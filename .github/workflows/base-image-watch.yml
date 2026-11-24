@@ -1,0 +1,66 @@
+name: Base image watch
+
+# S5.7 (NFR-7: apply each security patch of the BI image within 14 days of the upstream release).
+#   test:  the tests of scripts/base_image_watch.py, on each pull request and push to main.
+#   watch: each day, and by hand. When upstream has a newer apache/superset tag (see `pick` in the
+#          script), it opens a pull request that moves every pin, and dispatches docker-publish.yml
+#          on that branch with check_only=true. A pull request from GITHUB_TOKEN starts no
+#          `pull_request` run, so that dispatch is what runs the image checks and the S5.6 RLS check.
+#          Nothing here publishes an image: a `v*` git tag publishes.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/base_image_watch.py
+      - scripts/test_base_image_watch.py
+      - .github/workflows/base-image-watch.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/base_image_watch.py
+      - scripts/test_base_image_watch.py
+      - .github/workflows/base-image-watch.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Tests of the watch (a mocked newer tag opens a pull request)
+        run: python3 scripts/test_base_image_watch.py -v
+
+  watch:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # push the base-image/<tag> branch
+      pull-requests: write   # open the pull request
+      actions: write         # dispatch docker-publish.yml with check_only=true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Look for a newer base tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/base_image_watch.py

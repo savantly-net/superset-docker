@@ -4,6 +4,7 @@ name: Build and push Docker image
 # Publishing is a deliberate act: push a git tag (v7.0.0, v7.0.0rc1, or v7.0.0-2 for a rebuild on the
 # same Superset version) or run the workflow by hand. Version tags are immutable and `latest` moves only
 # when asked (never to a release candidate), so a merge can never overwrite the tag production is running.
+# A manual run with check_only=true runs every check and publishes nothing (S5.7, base-image-watch.yml).
 on:
   push:
     branches: [main]
@@ -24,6 +25,11 @@ on:
         type: string
       push_latest:
         description: "Also move savantly/superset:latest to this build (only after the version is proven in prod)"
+        required: false
+        type: boolean
+        default: false
+      check_only:
+        description: "Run every check and publish nothing (S5.7: the base-image watch dispatches this on its pull request branch)"
         required: false
         type: boolean
         default: false
@@ -68,7 +74,8 @@ jobs:
               fi ;;
             workflow_dispatch)
               base="${{ inputs.base_tag }}"; image="${{ inputs.image_tag }}"; image="${image:-$base}"
-              publish=true; push_latest="${{ inputs.push_latest }}" ;;
+              publish=true; push_latest="${{ inputs.push_latest }}"
+              if [ "${{ inputs.check_only }}" = "true" ]; then publish=false; push_latest=false; fi ;;
             *)
               base=$(sed -nE 's/^FROM apache\/superset:\$\{BASE_TAG:-([^}]+)\}.*/\1/p' Dockerfile); image="$base" ;;
           esac

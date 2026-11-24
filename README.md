@@ -75,6 +75,19 @@ RIG_SKIP_BUILD=1 rig/rls-check.sh     # after: docker tag savantly/superset:ci-c
   rewrites the `GuestIssuer` and `Embed` roles and the service account, so a plan for another BI is
   hand-made for now.
 
+## Base image watch
+`.github/workflows/base-image-watch.yml` runs `scripts/base_image_watch.py` each day (S5.7, NFR-7: each
+security patch within 14 days). When Docker Hub has a newer `apache/superset` tag, it pushes
+`base-image/<tag>`, moves every pin (`Dockerfile`, `rig/compose.yml`, `deploy.sh`, the package-check
+fixture), and opens a pull request. The candidate is a final `7.x.y` release newer than the pin, or, while
+the pin is a release candidate, a later candidate of the same version. A `-dev`, `-lean` or `-pyNNN` variant
+never counts. An existing branch for the tag stops a second pull request.
+
+A pull request that `GITHUB_TOKEN` opens starts no `pull_request` run. The watch therefore dispatches
+`docker-publish.yml` on the branch with `check_only=true`: every check above runs, the RLS check included,
+and nothing is published. Merging the pull request publishes nothing either. Tests:
+`python3 scripts/test_base_image_watch.py`.
+
 ## Embedding and the service login
 `EMBEDDED_SUPERSET=true` turns embedding on (S5.8). Off, the image behaves as before. On, it needs:
 - `GUEST_TOKEN_JWT_SECRET`, the key of the guest tokens. The start stops with the variable's name when it is
