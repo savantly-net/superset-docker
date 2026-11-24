@@ -12,8 +12,8 @@ Rebuilding from a different Superset version is `--build-arg BASE_TAG=<apache/su
 Images are published by CI from git tags, never from merges:
 
 ```
-git tag -a v7.0.0rc2 -m "Superset 7.0.0rc2 image"
-git push origin v7.0.0rc2        # -> savantly/superset:7.0.0rc2 (built from apache/superset:7.0.0rc2)
+git tag -a v7.0.0rc3 -m "Superset 7.0.0rc3 image"
+git push origin v7.0.0rc3        # -> savantly/superset:7.0.0rc3 (built from apache/superset:7.0.0rc3)
 ```
 
 `vX.Y.Z-N` publishes a rebuild on the same Superset version. Version tags are immutable. `latest` only moves
@@ -24,8 +24,8 @@ release candidate. Pin deployments by digest (the publish run summary prints the
 CI runs five checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
 
 ```
-scripts/check-package-unmodified.sh apache/superset:7.0.0rc2 savantly/superset:ci-check
-scripts/test-package-check.sh 7.0.0rc2
+scripts/check-package-unmodified.sh apache/superset:7.0.0rc3 savantly/superset:ci-check
+scripts/test-package-check.sh 7.0.0rc3
 scripts/smoke-test.sh savantly/superset:ci-check
 scripts/public-lockdown-check.sh savantly/superset:ci-check
 scripts/test-lockdown-check.sh savantly/superset:ci-check
