@@ -1,0 +1,54 @@
+# The S5.2 login check: rig-superset in OAuth mode against a fake OIDC provider and a fake
+# FranOps `userinfo` endpoint. Use it on top of compose.yml and compose.oauth.yml:
+#   rig/oidc-login-check.sh
+# The fakes run from the rig image, which has PyJWT and cryptography. No port is published:
+# the probe runs inside rig-superset, so one issuer host serves the browser hop and Superset's
+# own token and JWKS calls.
+x-fake: &fake
+  image: franops-bi-rig/superset:local
+  pull_policy: never
+  user: superset
+  working_dir: /rig-oidc
+  volumes:
+    - ./oidc:/rig-oidc:ro
+
+services:
+  rig-fake-oidc:
+    <<: *fake
+    entrypoint: ["python", "-u", "/rig-oidc/fake_oidc.py"]
+    environment:
+      FAKE_OIDC_ISSUER: http://rig-fake-oidc:8080
+      FAKE_OIDC_CLIENT_ID: rig-bi-client
+      FAKE_OIDC_CLIENT_SECRET: rig-bi-client-secret
+    healthcheck:
+      test: ["CMD", "python", "-I", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 2s
+      retries: 30
+
+  rig-fake-franops:
+    <<: *fake
+    entrypoint: ["python", "-u", "/rig-oidc/fake_franops.py"]
+    environment:
+      FAKE_FRANOPS_KEY: fran_rig-bi-userinfo-key
+    healthcheck:
+      test: ["CMD", "python", "-I", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=3)"]
+      interval: 2s
+      retries: 30
+
+  rig-superset:
+    environment:
+      # The issuer only: the image reads the endpoints from its discovery document.
+      OAUTH_ISSUER: http://rig-fake-oidc:8080
+      OAUTH_NAME: oidc
+      OAUTH_CLIENT_ID: rig-bi-client
+      OAUTH_CLIENT_SECRET: rig-bi-client-secret
+      FRANOPS_URL: http://rig-fake-franops:8081
+      FRANOPS_BI_API_KEY: fran_rig-bi-userinfo-key
+      FRANOPS_TIMEOUT_SECONDS: "3"
+    volumes:
+      - ./oidc:/rig-oidc:ro
+    depends_on:
+      rig-fake-oidc:
+        condition: service_healthy
+      rig-fake-franops:
+        condition: service_healthy
