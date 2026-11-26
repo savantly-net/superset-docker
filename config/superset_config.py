@@ -335,26 +335,26 @@ SECRET_KEY = get_env_variable("SECRET_KEY")
 # This will make sure the redirect_uri is properly computed, even with SSL offloading
 ENABLE_PROXY_FIX = get_env_variable("ENABLE_PROXY_FIX", False)
 
-DB_DIALECT = get_env_variable("DB_DIALECT")
-DB_USER = get_env_variable("DB_USER")
-DB_PASSWORD = get_env_variable("DB_PASSWORD")
-DB_HOST = get_env_variable("DB_HOST")
-DB_PORT = get_env_variable("DB_PORT")
-DB_NAME = get_env_variable("DB_NAME")
+# The metadata database. A deployment gives the whole connection string in
+# SQLALCHEMY_DATABASE_URI, from the vault secret bi-metadata-dsn (design/bi-image.md). Without
+# it, the image builds the string from DB_DIALECT, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT and
+# DB_NAME, as the rig and docker-compose do.
+SQLALCHEMY_DATABASE_URI = os.environ.get("SQLALCHEMY_DATABASE_URI", "").strip()
+if not SQLALCHEMY_DATABASE_URI:
+    SQLALCHEMY_DATABASE_URI = "%s://%s:%s@%s:%s/%s" % (
+        get_env_variable("DB_DIALECT"),
+        get_env_variable("DB_USER"),
+        get_env_variable("DB_PASSWORD"),
+        get_env_variable("DB_HOST"),
+        get_env_variable("DB_PORT"),
+        get_env_variable("DB_NAME"),
+    )
 
-# The SQLAlchemy connection string.
-SQLALCHEMY_DATABASE_URI = "%s://%s:%s@%s:%s/%s" % (
-    DB_DIALECT,
-    DB_USER,
-    DB_PASSWORD,
-    DB_HOST,
-    DB_PORT,
-    DB_NAME,
-)
-
+# Redis serves Celery only (alerts, reports, async queries). A deployment that runs no Celery
+# worker sets no Redis, and the web process never connects to the placeholder host.
 REDIS_PROTOCOL = get_env_variable("REDIS_PROTOCOL", "redis")
-REDIS_HOST = get_env_variable("REDIS_HOST")
-REDIS_PORT = get_env_variable("REDIS_PORT")
+REDIS_HOST = get_env_variable("REDIS_HOST", "redis.invalid")
+REDIS_PORT = get_env_variable("REDIS_PORT", "6379")
 REDIS_CELERY_DB = get_env_variable("REDIS_CELERY_DB", "0")
 REDIS_RESULTS_DB = get_env_variable("REDIS_RESULTS_DB", "1")
 

@@ -5,9 +5,11 @@
 # Usage: scripts/smoke-test.sh <image> [timeout-seconds]
 #
 # superset_config.py needs a metadata database, so the test starts a throwaway Postgres on a
-# private Docker network and applies the migrations with `superset db upgrade` first. Redis
-# gets a placeholder host: /health does not reach it. The test publishes no port and pushes
-# nothing; it sends GET /health over TCP to gunicorn from inside the app container.
+# private Docker network and applies the migrations with `superset db upgrade` first. The
+# environment is the deployed shape: SECRET_KEY and SQLALCHEMY_DATABASE_URI only, with no DB_*
+# part and no Redis (the vault secrets bi-secret-key and bi-metadata-dsn). The rig covers the
+# DB_* parts. The test publishes no port and pushes nothing; it sends GET /health over TCP to
+# gunicorn from inside the app container.
 set -euo pipefail
 
 IMAGE="${1:?usage: $0 <image> [timeout-seconds]}"
@@ -33,14 +35,7 @@ trap cleanup EXIT
 
 ENV_ARGS=(
   -e SECRET_KEY=smoke-test-secret-key-not-for-production
-  -e DB_DIALECT=postgresql+psycopg2
-  -e DB_USER=superset
-  -e DB_PASSWORD=superset
-  -e DB_HOST="$DB"
-  -e DB_PORT=5432
-  -e DB_NAME=superset
-  -e REDIS_HOST=redis.invalid
-  -e REDIS_PORT=6379
+  -e SQLALCHEMY_DATABASE_URI="postgresql+psycopg2://superset:superset@$DB:5432/superset"
 )
 
 docker network create "$NETWORK" >/dev/null
