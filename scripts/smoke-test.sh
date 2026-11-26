@@ -50,12 +50,12 @@ docker run -d --name "$DB" --network "$NETWORK" \
 
 echo "smoke-test: waiting for Postgres"
 for _ in $(seq 1 60); do
-  if docker exec "$DB" pg_isready -U superset -d superset >/dev/null 2>&1; then
+  if docker exec "$DB" pg_isready -h 127.0.0.1 -U superset -d superset >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-docker exec "$DB" pg_isready -U superset -d superset >/dev/null
+docker exec "$DB" pg_isready -h 127.0.0.1 -U superset -d superset >/dev/null
 
 echo "smoke-test: applying migrations"
 docker run --rm --network "$NETWORK" "${ENV_ARGS[@]}" "$IMAGE" superset db upgrade >/dev/null 2>&1 \

@@ -167,7 +167,47 @@ def get_nested_value(data, path, default=None):
         return default
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """A boolean from the environment. Only 1, true, yes, or on (any case) is true."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# The service account of the guest-token broker (S5.8, T-4, decided 2026-11-16). Under OAuth,
+# the API login with the `db` provider accepts this account only, and only while its one role
+# is GUEST_ISSUER_ROLE. FranOps stores the same username in its BI connection.
+BI_SERVICE_USERNAME = get_env_variable("BI_SERVICE_USERNAME", "franops_guest_issuer")
+GUEST_ISSUER_ROLE = get_env_variable("GUEST_ISSUER_ROLE", "GuestIssuer")
+
+
+def service_login_allowed(user, service_username: str, issuer_role: str) -> bool:
+    """True when `user` may log in through the API with a password under OAuth.
+
+    The user must be the service account, and its roles must be the issuer role and nothing
+    else. A second role (Admin, for example) would make the password login a way around OAuth
+    for that role, so it refuses the account.
+    """
+    if user is None or user.username != service_username:
+        return False
+    return [role.name for role in user.roles] == [issuer_role]
+
+
 class CustomSsoSecurityManager(SupersetSecurityManager):
+    def auth_user_db(self, username, password):
+        """Under OAuth, the API password login is open to the service account only (S5.8).
+
+        AUTH_API_LOGIN_ALLOW_MULTIPLE_PROVIDERS opens the `db` login to each user with a
+        password (T-4). This check closes it again for each user except the service account.
+        The password check of the parent still runs for the service account.
+        """
+        user = super().auth_user_db(username, password)
+        if user is not None and not service_login_allowed(user, BI_SERVICE_USERNAME, GUEST_ISSUER_ROLE):
+            logger.warning("api db login refused under oauth: %s is not the service account", user.username)
+            return None
+        return user
+
     def oauth_user_info(self, provider, response=None):
         logging.debug("Oauth2 provider: {0}.".format(provider))
         logging.debug("Oauth2 oauth_remotes provider: {0}.".format(self.appbuilder.sm.oauth_remotes[provider]))
@@ -262,7 +302,9 @@ CELERY_CONFIG = CeleryConfig
 FEATURE_FLAGS = {
     "ENABLE_TEMPLATE_PROCESSING": get_env_variable('ENABLE_TEMPLATE_PROCESSING', True),
     "DASHBOARD_NATIVE_FILTERS": get_env_variable('DASHBOARD_NATIVE_FILTERS', True),
-    "ALERT_REPORTS": True
+    "ALERT_REPORTS": True,
+    # The `draft` and `certified` tags (bi-image.md, S5.5). Off, an import writes no tag.
+    "TAGGING_SYSTEM": True,
 }
 ALERT_REPORTS_NOTIFICATION_DRY_RUN = True
 WEBDRIVER_BASEURL = "http://superset:8088/"
@@ -283,6 +325,52 @@ RECAPTCHA_PUBLIC_KEY = ""
 if enable_oauth:
     from flask_appbuilder.security.manager import AUTH_OAUTH
     CUSTOM_SECURITY_MANAGER = CustomSsoSecurityManager
+    # The broker logs in with the `db` provider while web login is OAuth (T-4). The flag and
+    # the auth_user_db limit above are set together, and only here: without the limit, the
+    # flag opens the API login to each user with a password.
+    AUTH_API_LOGIN_ALLOW_MULTIPLE_PROVIDERS = True
+
+# ---------------------------------------------------------------------------------------------
+# Embedding (S5.8, design/bi-image.md section 3). EMBEDDED_SUPERSET=true turns it on, and it
+# then needs GUEST_TOKEN_JWT_SECRET and FRANOPS_ORIGIN. Off, the image behaves as before.
+# ---------------------------------------------------------------------------------------------
+# The guest role. `can_read` on Chart and Dashboard, and `datasource_access` on the scorecard
+# datasets (T-4). Superset's default is Public, which holds no permission here.
+GUEST_ROLE_NAME = "Embed"
+GUEST_TOKEN_JWT_EXP_SECONDS = 300
+
+embedding_enabled = _env_flag("EMBEDDED_SUPERSET")
+FEATURE_FLAGS["EMBEDDED_SUPERSET"] = embedding_enabled
+# No Redis on the rig: ALERT_REPORTS=false turns the reports scheduler off.
+FEATURE_FLAGS["ALERT_REPORTS"] = _env_flag("ALERT_REPORTS", True)
+
+if embedding_enabled:
+    import copy
+
+    from superset.config import CORS_OPTIONS as _DEFAULT_CORS_OPTIONS  # noqa: E402
+    from superset.config import TALISMAN_CONFIG as _DEFAULT_TALISMAN_CONFIG  # noqa: E402
+
+    # Superset refuses to start with its default secret while embedding is on. A missing
+    # variable stops the start here, with its name.
+    GUEST_TOKEN_JWT_SECRET = get_env_variable("GUEST_TOKEN_JWT_SECRET")
+
+    # The origins that may frame BI: FranOps, and each external host (FR-6.5), separated by
+    # spaces or commas.
+    embed_origins = [get_env_variable("FRANOPS_ORIGIN").strip()] + [
+        origin for origin in get_env_variable("EMBED_ORIGINS", "").replace(",", " ").split() if origin
+    ]
+    for origin in embed_origins:
+        if not origin.startswith(("https://", "http://")) or origin.count("/") != 2:
+            raise EnvironmentError(f"embed origin {origin!r} must be a scheme and a host only")
+
+    TALISMAN_CONFIG = copy.deepcopy(_DEFAULT_TALISMAN_CONFIG)
+    TALISMAN_CONFIG["content_security_policy"]["frame-ancestors"] = ["'self'", *embed_origins]
+    # frame-ancestors decides who may frame BI. X-Frame-Options SAMEORIGIN would block each
+    # other origin in a browser that reads it first.
+    TALISMAN_CONFIG["frame_options"] = None
+
+    CORS_OPTIONS = copy.deepcopy(_DEFAULT_CORS_OPTIONS)
+    CORS_OPTIONS["origins"] = [*CORS_OPTIONS.get("origins", []), *embed_origins]
 
 
 # Email configuration

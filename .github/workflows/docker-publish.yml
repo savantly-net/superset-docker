@@ -4,6 +4,7 @@ name: Build and push Docker image
 # Publishing is a deliberate act: push a git tag (v7.0.0, v7.0.0rc1, or v7.0.0-2 for a rebuild on the
 # same Superset version) or run the workflow by hand. Version tags are immutable and `latest` moves only
 # when asked (never to a release candidate), so a merge can never overwrite the tag production is running.
+# A manual run with check_only=true runs every check and publishes nothing (S5.7, base-image-watch.yml).
 on:
   push:
     branches: [main]
@@ -27,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      check_only:
+        description: "Run every check and publish nothing (S5.7: the base-image watch dispatches this on its pull request branch)"
+        required: false
+        type: boolean
+        default: false
 
 env:
   IMAGE_NAME: savantly/superset
@@ -42,8 +48,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # The base image already ships Chromium; the build is a pip install plus a config copy.
-    # The checks add a base-image pull, a fixture build, and a smoke test with Postgres.
-    timeout-minutes: 30
+    # The checks add a base-image pull, a fixture build, a smoke test with Postgres, and the rig.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -68,7 +74,8 @@ jobs:
               fi ;;
             workflow_dispatch)
               base="${{ inputs.base_tag }}"; image="${{ inputs.image_tag }}"; image="${image:-$base}"
-              publish=true; push_latest="${{ inputs.push_latest }}" ;;
+              publish=true; push_latest="${{ inputs.push_latest }}"
+              if [ "${{ inputs.check_only }}" = "true" ]; then publish=false; push_latest=false; fi ;;
             *)
               base=$(sed -nE 's/^FROM apache\/superset:\$\{BASE_TAG:-([^}]+)\}.*/\1/p' Dockerfile); image="$base" ;;
           esac
@@ -124,6 +131,27 @@ jobs:
 
       - name: Negative test of the lockdown check
         run: scripts/test-lockdown-check.sh "${IMAGE_NAME}:ci-check"
+
+      - name: Public lockdown check, with OAuth and embedding on (S5.8)
+        run: scripts/public-lockdown-check.sh "${IMAGE_NAME}:ci-check" 240 "" scripts/deployed-shape.env
+
+      - name: Service login and embed check (S5.8, the T-4 login table)
+        run: scripts/guest-login-check.sh "${IMAGE_NAME}:ci-check"
+
+      - name: Negative test of the service login and embed check
+        run: scripts/test-guest-login-check.sh "${IMAGE_NAME}:ci-check"
+
+      # S5.6: the rig runs the image that the checks above built, so a tag checks what it publishes.
+      - name: Set up Python for the RLS check
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: RLS check (S5.6) - a guest token for one franchisee sees no row of another; fails on the seeded fault
+        run: |
+          pip install -e tools/franops_bi
+          docker tag "${IMAGE_NAME}:ci-check" franops-bi-rig/superset:local
+          RIG_SKIP_BUILD=1 rig/rls-check.sh
 
       - name: Login to Docker Hub
         if: steps.tag.outputs.publish == 'true'

@@ -1,0 +1,49 @@
+name: franops-bi
+
+# The franops-bi tool (S5.5). Builds and pushes nothing to Docker Hub.
+#   unit:  the unit tests, and `franops-bi validate` on the fixture bi/ folder.
+#   rig:   the rig tests. They build the image under a local-only tag, start rig/ with
+#          Docker Compose, deploy tests/fixtures/bi twice, and tear the rig down.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e 'tools/franops_bi[test]'
+      - name: Unit tests
+        run: python -m pytest -q tools/franops_bi/tests
+      - name: Parse each YAML of the fixture bi/ folder
+        run: franops-bi validate --dir tests/fixtures/bi
+
+  rig:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: unit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e 'tools/franops_bi[test]'
+      - name: Rig tests (deploy into an empty instance, twice)
+        run: rig/test-franops-bi.sh

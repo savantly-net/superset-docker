@@ -1,0 +1,49 @@
+dashboard_title: Calls by location
+description: null
+css: null
+slug: null
+certified_by: null
+certification_details: null
+published: true
+uuid: d2b0494d-e605-4fee-9aa2-d7eb7e3781f9
+position:
+  DASHBOARD_VERSION_KEY: v2
+  ROOT_ID:
+    type: ROOT
+    id: ROOT_ID
+    children:
+    - GRID_ID
+  GRID_ID:
+    type: GRID
+    id: GRID_ID
+    children:
+    - ROW-1
+    parents:
+    - ROOT_ID
+  ROW-1:
+    type: ROW
+    id: ROW-1
+    children:
+    - CHART-1
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    meta:
+      background: BACKGROUND_TRANSPARENT
+  CHART-1:
+    type: CHART
+    id: CHART-1
+    children: []
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-1
+    meta:
+      chartId: 909145156
+      uuid: 9ef54bbb-5731-4a70-95f8-c16fb5cf69bd
+      width: 6
+      height: 50
+      sliceName: Calls per location
+theme_uuid: null
+version: 1.0.0
+tags: []
