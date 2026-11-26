@@ -1,0 +1,12 @@
+# The S5.3 MCP check: the MCP settings for rig-superset, on top of compose.yml, compose.oauth.yml,
+# and compose.oidc.yml. rig/mcp-auth-check.sh starts `superset mcp run` inside rig-superset, so
+# the MCP service reads the same configuration and the same metadata database as the web process.
+# The issuer comes from OAUTH_ISSUER (compose.oidc.yml). The audience is the BI URL of a deploy;
+# the rig has no public URL, so it names one that resolves nowhere.
+services:
+  rig-superset:
+    environment:
+      MCP_JWKS_URI: http://rig-fake-oidc:8080/jwks.json
+      MCP_JWT_AUDIENCE: https://bi.rig.invalid
+      # Short, so the check sees a demotion take effect.
+      MCP_ROLE_CACHE_SECONDS: "2"

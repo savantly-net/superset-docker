@@ -5,7 +5,7 @@ ARG BASE_TAG
 # adapter are all in the base. This image only adds our config.
 FROM apache/superset:${BASE_TAG:-7.0.0rc3}
 
-COPY --chown=superset config/superset_config.py /app/
+COPY --chown=superset config/superset_config.py config/draft_hook.py /app/
 ENV SUPERSET_CONFIG_PATH=/app/superset_config.py
 
 CMD ["/app/docker/entrypoints/run-server.sh"]

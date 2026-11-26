@@ -99,72 +99,63 @@ if app_logo_url:
 
 
 import json
+import urllib.error
+import urllib.parse
 from superset.security import SupersetSecurityManager
 
 # Env values are strings: "false" was truthy before this check existed.
 enable_oauth = str(get_env_variable("OAUTH_ENABLED", "false")).strip().lower() in ("1", "true", "yes")
 
+# ---------------------------------------------------------------------------------------------
+# Web authentication (S5.2, design/bi-image.md section 1): one generic OpenID Connect provider.
+# The image reads the provider from its discovery document, so it holds no code for one
+# provider. The provider gives the identity only. The BI role comes from the FranOps `userinfo`
+# endpoint at login (spike T-5 check 2: the provider's tokens carry no role).
+# ---------------------------------------------------------------------------------------------
 if enable_oauth:
-    oauthBaseUrl = get_env_variable("OAUTH_ISSUER")
-    oauth_name = get_env_variable("OAUTH_NAME")
-    oauth_client_id = get_env_variable("OAUTH_CLIENT_ID")
+    # OIDC_ISSUER is the name in design/bi-image.md; OAUTH_ISSUER is the name of earlier deploys.
+    oauth_issuer = (os.environ.get("OIDC_ISSUER") or get_env_variable("OAUTH_ISSUER")).rstrip("/")
+    oauth_name = get_env_variable("OAUTH_NAME", "oidc")
+    oauth_client_id = os.environ.get("OIDC_CLIENT_ID") or get_env_variable("OAUTH_CLIENT_ID")
     oauth_client_secret = get_env_variable("OAUTH_CLIENT_SECRET")
     oauth_token_key = get_env_variable("OAUTH_TOKEN_KEY", "access_token")
-    oauth_token_endpoint = get_env_variable("OAUTH_TOKEN_ENDPOINT")
-    oauth_authorization_endpoint = get_env_variable("OAUTH_AUTHORIZATION_ENDPOINT")
-    userinfo_endpoint = get_env_variable("OAUTH_USERINFO_ENDPOINT", "")
-    # Path to roles in OAuth user info response (supports dot notation for nested paths, e.g., "user.roles" or "attributes.roles")
-    oauth_roles_path = get_env_variable("OAUTH_ROLES_PATH", "roles")
-    # OAuth scope parameter (space-separated scopes, e.g., "profile email roles")
-    oauth_scope = get_env_variable("OAUTH_SCOPE", "openid")
-    # JWKS URI for token validation (required for OpenID Connect)
-    oauth_jwks_uri = get_env_variable("OAUTH_JWKS_URI", "")
-    # Server metadata URL for OpenID Connect discovery
-    oauth_server_metadata_url = get_env_variable("OAUTH_SERVER_METADATA_URL", "")
-    
+    # `openid` must stay in the scope: without it, the provider sends no ID token and Authlib
+    # verifies none.
+    oauth_scope = get_env_variable("OAUTH_SCOPE", "openid email profile")
+    # The discovery document gives the authorize, token, userinfo, and JWKS endpoints. Authlib
+    # reads it at the first login, not at start.
+    oauth_server_metadata_url = get_env_variable(
+        "OAUTH_SERVER_METADATA_URL", f"{oauth_issuer}/.well-known/openid-configuration"
+    )
+
     from flask_appbuilder.security.manager import AUTH_OAUTH
     AUTH_TYPE = AUTH_OAUTH
 
-    # Build OAuth provider configuration
-    oauth_provider_config = {
-        'name': oauth_name,
-        'token_key': oauth_token_key, 
-        'icon':'fa-address-card',   # Icon for the provider
-        'remote_app': {
-            'api_base_url': oauthBaseUrl,
-            'client_id': oauth_client_id, 
-            'client_secret': oauth_client_secret,
-            'client_kwargs':{
-                'scope': oauth_scope
-            },
-            'request_token_url':None,
-            'access_token_url': oauth_token_endpoint,
-            'authorize_url': oauth_authorization_endpoint,
-        }
+    oauth_remote_app = {
+        "api_base_url": oauth_issuer,
+        "client_id": oauth_client_id,
+        "client_secret": oauth_client_secret,
+        "client_kwargs": {"scope": oauth_scope},
+        "server_metadata_url": oauth_server_metadata_url,
     }
-    
-    # Add JWKS URI if provided (required for OpenID Connect)
-    if oauth_jwks_uri:
-        oauth_provider_config['remote_app']['jwks_uri'] = oauth_jwks_uri
-    
-    # Add server metadata URL if provided (for OpenID Connect discovery)
-    if oauth_server_metadata_url:
-        oauth_provider_config['remote_app']['server_metadata_url'] = oauth_server_metadata_url
+    # Optional overrides of the discovery document. Leave them unset for a provider whose
+    # discovery document is correct.
+    for _env, _key in (
+        ("OAUTH_AUTHORIZATION_ENDPOINT", "authorize_url"),
+        ("OAUTH_TOKEN_ENDPOINT", "access_token_url"),
+        ("OAUTH_JWKS_URI", "jwks_uri"),
+    ):
+        if os.environ.get(_env):
+            oauth_remote_app[_key] = os.environ[_env]
 
-    OAUTH_PROVIDERS = [oauth_provider_config]
-
-
-
-def get_nested_value(data, path, default=None):
-    """Get a nested value from a dictionary using a dot-separated path."""
-    keys = path.split('.')
-    current = data
-    try:
-        for key in keys:
-            current = current[key]
-        return current
-    except (KeyError, TypeError):
-        return default
+    OAUTH_PROVIDERS = [
+        {
+            "name": oauth_name,
+            "token_key": oauth_token_key,
+            "icon": "fa-address-card",
+            "remote_app": oauth_remote_app,
+        }
+    ]
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -194,6 +185,109 @@ def service_login_allowed(user, service_username: str, issuer_role: str) -> bool
     return [role.name for role in user.roles] == [issuer_role]
 
 
+class LoginRefused(Exception):
+    """The OAuth login is refused. FAB catches it, logs its text, and shows the login page.
+
+    The text names the reason only. It never holds an email, a token, or the API key.
+    """
+
+
+# The BI role that the FranOps `userinfo` endpoint returns, mapped to the Superset role key.
+# AUTH_ROLES_MAPPING maps the key to the Superset role. Each other value refuses the login.
+FRANOPS_BI_ROLES = {"HQ": "HQ"}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib sends the Authorization header on to a redirect target, so a redirect is refused:
+    FRANOPS_URL must name the host that answers."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_franops_opener = urllib.request.build_opener(_NoRedirect)
+
+
+def franops_bi_role(sub: str) -> dict:
+    """Ask FranOps for the BI role of the provider's user `sub`.
+
+    GET {FRANOPS_URL}/api/data/bi/userinfo?sub=<sub>, with FRANOPS_BI_API_KEY as the Bearer
+    (a key whose only scope is `data_bi:userinfo`). Returns the answer as a dict. Raises
+    LoginRefused when the configuration is missing, when FranOps does not answer 200 in
+    FRANOPS_TIMEOUT_SECONDS (a redirect included), or when the answer is not a JSON object.
+    """
+    base = os.environ.get("FRANOPS_URL", "").strip().rstrip("/")
+    key = os.environ.get("FRANOPS_BI_API_KEY", "").strip()
+    if not base or not key:
+        raise LoginRefused("FRANOPS_URL or FRANOPS_BI_API_KEY is not set")
+    try:
+        timeout = float(os.environ.get("FRANOPS_TIMEOUT_SECONDS", "5"))
+    except ValueError:
+        timeout = 5.0
+    url = f"{base}/api/data/bi/userinfo?{urllib.parse.urlencode({'sub': sub})}"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
+            # Some edges refuse the default Python-urllib agent (spike T-5).
+            "User-Agent": "franops-bi-login/1",
+        },
+    )
+    try:
+        with _franops_opener.open(request, timeout=timeout) as response:
+            if response.status != 200:
+                raise LoginRefused(f"FranOps userinfo answered {response.status}")
+            body = json.loads(response.read() or b"null")
+    except urllib.error.HTTPError as err:
+        raise LoginRefused(f"FranOps userinfo answered {err.code}") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as err:
+        reason = getattr(err, "reason", err)
+        raise LoginRefused(f"FranOps userinfo did not answer: {type(reason).__name__}") from None
+    except ValueError:
+        raise LoginRefused("FranOps userinfo answered with no JSON") from None
+    if not isinstance(body, dict):
+        raise LoginRefused("FranOps userinfo answered with no JSON object")
+    return body
+
+
+def oidc_user_info(claims: dict, franops: dict) -> dict:
+    """The FAB userinfo of one login, from the provider's claims and the FranOps answer.
+
+    The claims are those of the verified ID token (or of the provider's userinfo). They need
+    `sub`. The username is `oidc:<sub>`. `email`, `given_name`, and `family_name` are used when
+    present; `name` fills the first name when `given_name` is absent. `preferred_username` is
+    never read. A FranOps role that is not in FRANOPS_BI_ROLES (`NONE`, for a franchisee)
+    refuses the login.
+    """
+    sub = claims.get("sub")
+    role_key = FRANOPS_BI_ROLES.get(str(franops.get("biRole", "")))
+    if role_key is None:
+        raise LoginRefused(f"FranOps biRole {str(franops.get('biRole'))[:16]!r} has no BI access")
+    email = claims.get("email") or franops.get("email") or ""
+    first_name = claims.get("given_name") or claims.get("name") or ""
+    return {
+        "username": f"oidc:{sub}",
+        "email": email,
+        "first_name": first_name,
+        "last_name": claims.get("family_name") or "",
+        "role_keys": [role_key],
+    }
+
+
+def refuse_taken_email(sm, userinfo: dict) -> None:
+    """Raise LoginRefused when another Superset user has the email of `userinfo`.
+
+    ab_user.email is unique. FAB's insert of a second user with the same email fails, and FAB
+    logs the database error, which holds the email. The web login and the MCP resolver refuse
+    first.
+    """
+    if userinfo["email"]:
+        holder = sm.find_user(email=userinfo["email"])
+        if holder is not None and holder.username != userinfo["username"]:
+            raise LoginRefused("another Superset user has the same email")
+
+
 class CustomSsoSecurityManager(SupersetSecurityManager):
     def auth_user_db(self, username, password):
         """Under OAuth, the API password login is open to the service account only (S5.8).
@@ -209,42 +303,31 @@ class CustomSsoSecurityManager(SupersetSecurityManager):
         return user
 
     def oauth_user_info(self, provider, response=None):
-        logging.debug("Oauth2 provider: {0}.".format(provider))
-        logging.debug("Oauth2 oauth_remotes provider: {0}.".format(self.appbuilder.sm.oauth_remotes[provider]))
-        # Assuming all oauth connections are from keycloak
-        # Get the user info using the access token
-        res = self.appbuilder.sm.oauth_remotes[provider].get(userinfo_endpoint)
-        logger.info(f"userinfo response:")
-        for attr, value in vars(res).items():
-            print(attr, '=', value)
-        if res.status_code != 200:
-            logger.error('Failed to obtain user info: %s', res._content)
-            return
-        #dict_str = res._content.decode("UTF-8")
-        me = json.loads(res._content)
-        logger.debug(" user_data: %s", me)
-        
-        # Get roles using configurable path
-        user_roles = get_nested_value(me, oauth_roles_path, [])
-        
-        return {
-            'username' : me['preferred_username'],
-            'name' : me['name'],
-            'email' : me['email'],
-            'first_name': me['given_name'],
-            'last_name': me['family_name'],
-            'roles': user_roles,
-            'is_active': True,
-        }
+        """The user of one OAuth login (S5.2). Raises LoginRefused to refuse it.
 
-    def auth_user_oauth(self, userinfo):
-        user = super(CustomSsoSecurityManager, self).auth_user_oauth(userinfo)
-        roles = [self.find_role(x) for x in userinfo['roles']]
-        roles = [x for x in roles if x is not None]
-        user.roles = roles
-        logger.debug(' Update <User: %s> role to %s', user.username, roles)
-        self.update_user(user)  # update user roles
-        return user
+        FAB passes the user info that this returns to auth_user_oauth outside its error handler,
+        so a refusal raises: a None here would be a server error. FAB catches the exception in
+        the callback, logs its text, and shows the login page with a message.
+
+        Nothing here logs the claims, the email, a token, or the API key.
+        """
+        # Authlib verifies the ID token (signature from the provider's JWKS, issuer, audience,
+        # nonce, expiry) and stores its claims in response["userinfo"].
+        claims = (response or {}).get("userinfo")
+        if not claims:
+            # No ID token: the provider's userinfo endpoint, called with the access token.
+            claims = self.appbuilder.sm.oauth_remotes[provider].userinfo()
+        sub = str((claims or {}).get("sub") or "").strip()
+        if not sub:
+            raise LoginRefused("the provider's claims have no sub")
+        try:
+            userinfo = oidc_user_info(dict(claims), franops_bi_role(sub))
+            refuse_taken_email(self, userinfo)
+        except LoginRefused as err:
+            logger.warning("oauth login refused: provider=%s sub=%s: %s", provider, sub, err)
+            raise
+        logger.info("oauth login: provider=%s sub=%s role_keys=%s", provider, sub, userinfo["role_keys"])
+        return userinfo
 
 
 SECRET_KEY = get_env_variable("SECRET_KEY")
@@ -323,8 +406,16 @@ AUTH_USER_REGISTRATION_ROLE = get_env_variable("AUTH_USER_REGISTRATION_ROLE", "P
 RECAPTCHA_PUBLIC_KEY = ""
 
 if enable_oauth:
-    from flask_appbuilder.security.manager import AUTH_OAUTH
     CUSTOM_SECURITY_MANAGER = CustomSsoSecurityManager
+    # S5.2: an OAuth user is created at the first login, and its roles are set again at each
+    # login from the FranOps answer (`role_keys`). These are fixed under OAuth: the env value
+    # of AUTH_USER_REGISTRATION is a string, and "false" would be truthy.
+    AUTH_USER_REGISTRATION = True
+    AUTH_ROLES_MAPPING = {"HQ": ["HQ"]}
+    AUTH_ROLES_SYNC_AT_LOGIN = True
+    # FAB adds the registration role to each OAuth user. `Public` holds no permission (the
+    # lockdown check reads it), so the registration role grants nothing.
+    AUTH_USER_REGISTRATION_ROLE = "Public"
     # The broker logs in with the `db` provider while web login is OAuth (T-4). The flag and
     # the auth_user_db limit above are set together, and only here: without the limit, the
     # flag opens the API login to each user with a password.
@@ -371,6 +462,121 @@ if embedding_enabled:
 
     CORS_OPTIONS = copy.deepcopy(_DEFAULT_CORS_OPTIONS)
     CORS_OPTIONS["origins"] = [*CORS_OPTIONS.get("origins", []), *embed_origins]
+
+
+# ---------------------------------------------------------------------------------------------
+# MCP (S5.3, design/bi-image.md section 2). `superset mcp run` reads this section; the web
+# process does not. Auth is always on: the MCP service does not start until MCP_JWKS_URI and
+# MCP_JWT_AUDIENCE are set, so it never starts open.
+# ---------------------------------------------------------------------------------------------
+MCP_AUTH_ENABLED = True
+# Each MCP caller has a token from the OIDC provider. No API key, no guest token, no fixed user.
+MCP_API_KEY_ENABLED = False
+MCP_EMBEDDED_GUEST_AUTH_ENABLED = False
+MCP_DEV_USERNAME = None
+MCP_JWT_ALGORITHM = "RS256"
+# The provider's issuer, as for the web login. The JWKS URI is configuration, not derived from
+# the issuer: the path differs from provider to provider.
+MCP_JWT_ISSUER = (
+    os.environ.get("MCP_JWT_ISSUER") or os.environ.get("OIDC_ISSUER") or os.environ.get("OAUTH_ISSUER") or ""
+).rstrip("/") or None
+MCP_JWKS_URI = os.environ.get("MCP_JWKS_URI") or None
+# The BI URL: an MCP client sends `resource=<BI URL>` (RFC 8707), and the provider writes it into
+# `aud` (spike T-5 check 3). Separate more than one value with spaces or commas.
+_mcp_audience = [a for a in os.environ.get("MCP_JWT_AUDIENCE", "").replace(",", " ").split() if a]
+MCP_JWT_AUDIENCE = (_mcp_audience[0] if len(_mcp_audience) == 1 else _mcp_audience) or None
+MCP_REQUIRED_SCOPES = ["superset:read"]
+# Spike B-2 step 8. The setting is global, so HQ loses these tools too. It includes the three
+# tools of decision D-8 (execute_sql, create_virtual_dataset, create_dataset).
+MCP_DISABLED_TOOLS = {
+    "find_users",
+    "execute_sql",
+    "get_chart_sql",
+    "open_sql_lab_with_context",
+    "list_rls_filters",
+    "get_rls_filter_info",
+    "list_users",
+    "get_user_info",
+    "create_virtual_dataset",
+    "create_dataset",
+}
+
+try:
+    MCP_ROLE_CACHE_SECONDS = max(0.0, float(os.environ.get("MCP_ROLE_CACHE_SECONDS", "60")))
+except ValueError:
+    MCP_ROLE_CACHE_SECONDS = 60.0
+# sub -> the monotonic time until which FranOps' HQ answer holds. Only an HQ answer is kept.
+_mcp_hq_until: dict = {}
+
+
+class MCPUserRefused(PermissionError):
+    """The MCP resolver refuses the token's user. Superset fails the call closed."""
+
+
+def mcp_user_resolver(app, access_token) -> str:
+    """MCP_USER_RESOLVER: the Superset username of one verified MCP token (S5.3).
+
+    The username is `oidc:<sub>`, the same user as the web login (S5.2). The resolver asks
+    FranOps for the BI role of `sub` at each resolution, and keeps an HQ answer for
+    MCP_ROLE_CACHE_SECONDS. A web login that FranOps refuses does not sync the roles, so a user
+    that FranOps no longer answers HQ for would keep HQ through MCP without this call. Each
+    answer other than HQ refuses the call. An HQ user with no Superset user yet is created with
+    the HQ role, and an HQ user without the HQ role gets it again.
+
+    The resolver runs on the MCP event loop, so the FranOps call blocks it for at most
+    FRANOPS_TIMEOUT_SECONDS. Nothing here logs a claim other than `sub`, an email, or a token.
+    """
+    claims = getattr(access_token, "claims", None)
+    claims = dict(claims) if isinstance(claims, dict) else {}
+    sub = str(claims.get("sub") or "").strip()
+    if not sub:
+        raise MCPUserRefused("the token has no sub")
+    username = f"oidc:{sub}"
+
+    import time
+
+    if _mcp_hq_until.get(sub, 0.0) > time.monotonic():
+        return username
+    _mcp_hq_until.pop(sub, None)
+
+    from superset import security_manager as sm
+    from superset.extensions import db
+
+    try:
+        userinfo = oidc_user_info(claims, franops_bi_role(sub))
+        refuse_taken_email(sm, userinfo)
+        hq = sm.find_role(FRANOPS_BI_ROLES["HQ"])
+        if hq is None:
+            raise LoginRefused("the HQ role does not exist")
+        user = sm.find_user(username=username)
+        if user is None:
+            created = sm.add_user(
+                username, userinfo["first_name"] or username, userinfo["last_name"] or "-",
+                userinfo["email"] or f"{sub}@oidc.invalid", [hq],
+            )
+            if not created:
+                # Another worker made the user first; FAB rolled its own insert back.
+                db.session.rollback()
+                user = sm.find_user(username=username)
+                if user is None:
+                    raise LoginRefused("the user could not be created")
+            else:
+                logger.info("mcp user created: sub=%s role_keys=%s", sub, userinfo["role_keys"])
+        if user is not None and hq not in user.roles:
+            # The web login's sync gives the mapped role and the registration role only.
+            user.roles = [hq, *[r for r in user.roles if r.name == AUTH_USER_REGISTRATION_ROLE]]
+            db.session.commit()
+            logger.info("mcp user role synced: sub=%s role_keys=%s", sub, userinfo["role_keys"])
+    except LoginRefused as err:
+        logger.warning("mcp user refused: sub=%s: %s", sub, err)
+        raise MCPUserRefused(str(err)) from None
+
+    if MCP_ROLE_CACHE_SECONDS > 0:
+        _mcp_hq_until[sub] = time.monotonic() + MCP_ROLE_CACHE_SECONDS
+    return username
+
+
+MCP_USER_RESOLVER = mcp_user_resolver
 
 
 # Email configuration
@@ -479,6 +685,31 @@ def _rls_check_is_off(value) -> bool:
 
 if not _rls_check_is_off(get_env_variable("GUEST_TOKEN_REQUIRE_RLS", "true")):
     GUEST_TOKEN_VALIDATOR_HOOK = guest_token_validator
+
+
+# ---------------------------------------------------------------------------------------------
+# Drafts (S7.3, design/bi-image.md section 5; spike T-3). Each new chart and dashboard gets the
+# tag `draft`, unless an import from the brand repository made it (`is_managed_externally`).
+# rig/hq-access-check.sh proves it on each build. The hook sits beside this file in the image
+# (/app/draft_hook.py). A superset_config_docker.py that sets FLASK_APP_MUTATOR replaces the
+# hook: call _install_draft_hook(app) from that mutator.
+# ---------------------------------------------------------------------------------------------
+def _install_draft_hook(app) -> None:
+    import importlib.util
+    import sys
+
+    # One module for each process, so that the module's own guard stops a second install.
+    module = sys.modules.get("franops_draft_hook")
+    if module is None:
+        path = Path(__file__).with_name("draft_hook.py")
+        spec = importlib.util.spec_from_file_location("franops_draft_hook", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules["franops_draft_hook"] = module
+    module.install(app)
+
+
+FLASK_APP_MUTATOR = _install_draft_hook
 
 #
 # Optionally import superset_config_docker.py (which will have been included on

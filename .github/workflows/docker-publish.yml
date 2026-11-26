@@ -55,6 +55,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: No code for one identity provider (S5.2), and its negative test
+        run: scripts/check-no-provider-code.sh && scripts/test-no-provider-code.sh
+
       - name: Resolve tags
         id: tag
         # base_tag  = the apache/superset version to build FROM
@@ -152,6 +155,15 @@ jobs:
           pip install -e tools/franops_bi
           docker tag "${IMAGE_NAME}:ci-check" franops-bi-rig/superset:local
           RIG_SKIP_BUILD=1 rig/rls-check.sh
+
+      - name: OIDC login check (S5.2) - an HQ user signs in with HQ, a franchisee is refused, no password form
+        run: RIG_SKIP_BUILD=1 rig/oidc-login-check.sh
+
+      - name: MCP auth check (S5.3) - no token is 401, an HQ token runs as that user, the D-8 tools fail, no registration
+        run: RIG_SKIP_BUILD=1 rig/mcp-auth-check.sh
+
+      - name: HQ access, draft, certified view and certify check (S7.1, S7.3, S7.4, S7.5)
+        run: RIG_SKIP_BUILD=1 rig/hq-access-check.sh
 
       - name: Login to Docker Hub
         if: steps.tag.outputs.publish == 'true'

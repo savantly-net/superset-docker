@@ -91,6 +91,15 @@ class Superset:
             path += "?" + urllib.parse.urlencode({"q": _rison(query)})
         return self.request("GET", path)[1]
 
+    def tagged_objects(self, tag: str) -> list[dict[str, Any]]:
+        """The objects with `tag`, from `GET /api/v1/tag/get_objects/`.
+
+        ⚠️ That endpoint reads plain query arguments, not Rison. With `?q=(tags:x)` it ignores the
+        filter and returns each tagged object.
+        """
+        path = "/api/v1/tag/get_objects/?" + urllib.parse.urlencode({"tags": tag})
+        return self.request("GET", path)[1].get("result", [])
+
     def list_all(self, resource: str, columns: list[str]) -> list[dict[str, Any]]:
         """Every row of `/api/v1/<resource>/`, page by page."""
         rows: list[dict[str, Any]] = []
@@ -114,6 +123,14 @@ class Superset:
         return self.request(
             "POST", "/api/v1/assets/import/", raw=raw, content_type=ctype, expect=None
         )
+
+    def export(self, resource: str, ids: list[int]) -> bytes:
+        """The export ZIP of the `resource` objects with these ids, for example charts."""
+        path = f"/api/v1/{resource}/export/?" + urllib.parse.urlencode({"q": _rison(list(ids))})
+        status, body = self.request("GET", path, expect=None)
+        if status != 200 or not isinstance(body, bytes):
+            raise SupersetError("GET", path, status, body)
+        return body
 
     def export_assets(self) -> bytes:
         status, body = self.request("GET", "/api/v1/assets/export/", expect=None)
