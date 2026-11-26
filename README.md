@@ -169,7 +169,7 @@ does; in OAuth mode BI accepts that login for the guest-token service account on
 
 ## The certified view (S7.4)
 The certified view is Superset's own tag page, `/all_entities/?id=<the id of the tag certified>`, and its
-API `GET /api/v1/tag/get_objects/?tags=certified`. An HQ user opens both with `can_read` on Tag. The chart
+API `GET /api/v1/tag/get_objects/?tags=certified`. An HQ user opens the page with `can_list` on Tags and the API with `can_read` on Tag. The chart
 and dashboard list APIs return each asset's tags, so each draft carries the label `draft`. Superset lists
 an unpublished dashboard to its editors only, so an HQ user sees no draft dashboard of another HQ user.
 

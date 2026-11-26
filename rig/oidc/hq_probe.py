@@ -95,7 +95,7 @@ def main():
         # The HQ grants of design/bi-image.md (rig only, item 49).
         hq = sm.find_role("HQ") or sm.add_role("HQ")
         grants = [("can_read", "Chart"), ("can_write", "Chart"), ("can_read", "Dashboard"),
-                  ("can_write", "Dashboard"), ("can_read", "Tag")]
+                  ("can_write", "Dashboard"), ("can_read", "Tag"), ("can_list", "Tags")]
         for perm, view in grants:
             pv = sm.find_permission_view_menu(perm, view)
             if pv not in hq.permissions:

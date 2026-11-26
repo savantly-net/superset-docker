@@ -29,6 +29,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 import zipfile
 
 import yaml
@@ -107,6 +109,25 @@ def normalized(doc):
     return out
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def page_status(client, path):
+    """The status of a page for a client, with no redirect followed. The client follows redirects,
+    so on Superset 7.0.0rc2 a denied page came back as the login page, a 200: S7.4 passed with no
+    grant until 7.0.0rc3 answered 403. A redirect here is its own 3xx status."""
+    cookies = next(h for h in client._opener.handlers if isinstance(h, urllib.request.HTTPCookieProcessor))
+    opener = urllib.request.build_opener(cookies, _NoRedirect())
+    headers = {"Authorization": f"Bearer {client._token}"} if client._token else {}
+    try:
+        with opener.open(urllib.request.Request(client.url + path, headers=headers), timeout=client.timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as err:
+        return err.code
+
+
 def certified_view_clean(hq, admin, label):
     certified, drafts = tagged(hq, "certified"), tagged(admin, "draft")
     check(f"S7.4 AC1 {label}: HQ's certified list holds no asset with draft",
@@ -138,8 +159,8 @@ def main():
     certified_view_clean(hq, admin, "before the certify")
     tag_rows = admin.get("/api/v1/tag/", filters=[{"col": "name", "opr": "eq", "value": "certified"}])
     tag_id = tag_rows["result"][0]["id"] if tag_rows.get("result") else None
-    status, _ = hq.request("GET", f"/all_entities/?id={tag_id}", expect=None)
-    check("S7.4: HQ opens the certified page /all_entities/?id=<certified>", status == 200, [tag_id, status])
+    status = page_status(hq, f"/all_entities/?id={tag_id}")
+    check("S7.4: HQ opens the certified page /all_entities/?id=<certified>, with no redirect", status == 200, [tag_id, status])
 
     drafts = tagged(admin, "draft")
     shown = {("chart", i): v for i, v in labels(hq, "chart", "slice_name").items()}
@@ -171,7 +192,7 @@ def main():
     code, out = franops_bi("certify", "chart", str(mcp_chart), "--repo", str(repo), user=HQ_DB)
     check("S7.5 AC3: certify as HQ exits 1: BI refuses the export, before any swap",
           code == 1 and "refused" in out and "did not change" in out, out.splitlines()[-2:] if out else code)
-    # The swap itself, with no tool in the way: BI refuses it to HQ (HQ has can_read on Tag only).
+    # The swap itself, with no tool in the way: BI refuses it to HQ (HQ has can_read on Tag and can_list on Tags, no write).
     removed, _ = hq.request("DELETE", f"/api/v1/tag/2/{mcp_chart}/draft/", expect=None)
     added, _ = hq.request("POST", f"/api/v1/tag/2/{mcp_chart}/", {"properties": {"tags": ["certified"]}},
                           expect=None)
