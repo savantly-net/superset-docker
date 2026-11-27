@@ -31,6 +31,7 @@ scripts/smoke-test.sh savantly/superset:ci-check
 scripts/public-lockdown-check.sh savantly/superset:ci-check
 scripts/test-lockdown-check.sh savantly/superset:ci-check
 scripts/public-lockdown-check.sh savantly/superset:ci-check 240 "" scripts/deployed-shape.env
+scripts/public-lockdown-check.sh savantly/superset:ci-check 240 "" <deployed-shape.env + BI_API_KEYS=true>
 scripts/guest-login-check.sh savantly/superset:ci-check
 scripts/test-guest-login-check.sh savantly/superset:ci-check
 RIG_SKIP_BUILD=1 rig/rls-check.sh     # after: docker tag savantly/superset:ci-check franops-bi-rig/superset:local

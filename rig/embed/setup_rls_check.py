@@ -4,7 +4,8 @@ Usage: rig/rig.sh rls-plan      (runs this file inside rig-superset, after `fran
 Prints one line 'RIGJSON {...}': each chart tagged `certified`, with its dataset, the
 dashboards that hold it, and the embedded UUID of each of those dashboards.
 
-Rig only. It writes what no FranOps or franops-bi code writes yet (pointer item 49):
+Rig only. Since S5.9 franops-bi writes the roles and the service account too; the embedded
+config is still rig only:
 - an embedded config on each dashboard that holds a certified chart;
 - the role `GuestIssuer`: `can_grant_guest_token`, and `datasource_access` on each dataset of
   a certified chart (spike T-4: the minting account needs both);

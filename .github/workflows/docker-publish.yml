@@ -138,6 +138,11 @@ jobs:
       - name: Public lockdown check, with OAuth and embedding on (S5.8)
         run: scripts/public-lockdown-check.sh "${IMAGE_NAME}:ci-check" 240 "" scripts/deployed-shape.env
 
+      - name: Lockdown check with API keys on (S5.10) - no route takes a request with no credentials
+        run: |
+          { cat scripts/deployed-shape.env; echo BI_API_KEYS=true; } > "$RUNNER_TEMP/keys-shape.env"
+          scripts/public-lockdown-check.sh "${IMAGE_NAME}:ci-check" 240 "" "$RUNNER_TEMP/keys-shape.env"
+
       - name: Service login and embed check (S5.8, the T-4 login table)
         run: scripts/guest-login-check.sh "${IMAGE_NAME}:ci-check"
 
