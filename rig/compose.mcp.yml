@@ -8,5 +8,7 @@ services:
     environment:
       MCP_JWKS_URI: http://rig-fake-oidc:8080/jwks.json
       MCP_JWT_AUDIENCE: https://bi.rig.invalid
+      # Item 53: the fake provider's client. A token of another client is refused.
+      MCP_ALLOWED_CLIENT_IDS: rig-mcp-client
       # Short, so the check sees a demotion take effect.
       MCP_ROLE_CACHE_SECONDS: "2"

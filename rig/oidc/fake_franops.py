@@ -3,6 +3,7 @@
 GET /api/data/bi/userinfo?sub=<sub>, with `Authorization: Bearer <FAKE_FRANOPS_KEY>`, answers as
 fran-ops `app/api/data/bi/userinfo/route.ts` does:
   200 {"biRole": "HQ", "organizationId", "userId", "email"}   an HQ user of rig_users.py
+  200 {"biRole": "ADMIN", ...}                                an ADMIN user of rig_users.py
   200 {"biRole": "NONE", "organizationId"}                   each other sub
   401 a missing or wrong key · 422 a missing sub · a user's `franopsStatus` (502) when it has one,
 after a user's `franopsDelay` seconds when it has one
@@ -54,8 +55,8 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(user["franopsDelay"])
         if user and user.get("franopsStatus"):
             return self.send_json(user["franopsStatus"], {"error": "identity provider unavailable"})
-        if user and user["biRole"] == "HQ":
-            return self.send_json(200, {"biRole": "HQ", "organizationId": ORG, "userId": sub,
+        if user and user["biRole"] in ("HQ", "ADMIN"):
+            return self.send_json(200, {"biRole": user["biRole"], "organizationId": ORG, "userId": sub,
                                         "email": user.get("franopsEmail") or user.get("email")})
         return self.send_json(200, {"biRole": "NONE", "organizationId": ORG})
 

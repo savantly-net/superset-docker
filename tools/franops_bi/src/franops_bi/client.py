@@ -24,9 +24,22 @@ class SupersetError(RuntimeError):
 
 
 class Superset:
-    """A session on one Superset instance, logged in with the `db` provider."""
+    """A session on one Superset instance.
 
-    def __init__(self, url: str, username: str, password: str, timeout: float = 120.0):
+    With `api_key`, each call sends the key as the Bearer token, and nothing logs in: this is the
+    way in under OAuth (S5.10), where the `db` login accepts the service account only. Without
+    it, the session logs in with the `db` provider, as the rig does with OAuth off.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        username: str | None = None,
+        password: str | None = None,
+        timeout: float = 120.0,
+        *,
+        api_key: str | None = None,
+    ):
         self.url = url.rstrip("/")
         self.timeout = timeout
         self._opener = urllib.request.build_opener(
@@ -34,15 +47,20 @@ class Superset:
         )
         self._token: str | None = None
         self._csrf: str | None = None
-        status, body = self.request(
-            "POST",
-            "/api/v1/security/login",
-            {"username": username, "password": password, "provider": "db", "refresh": False},
-            expect=None,
-        )
-        if status != 200 or not isinstance(body, dict) or "access_token" not in body:
-            raise SupersetError("POST", "/api/v1/security/login", status, body)
-        self._token = body["access_token"]
+        if api_key:
+            self._token = api_key
+        else:
+            if not username or not password:
+                raise ValueError("Superset needs an API key, or a username and a password")
+            status, body = self.request(
+                "POST",
+                "/api/v1/security/login",
+                {"username": username, "password": password, "provider": "db", "refresh": False},
+                expect=None,
+            )
+            if status != 200 or not isinstance(body, dict) or "access_token" not in body:
+                raise SupersetError("POST", "/api/v1/security/login", status, body)
+            self._token = body["access_token"]
         # A write with a Bearer token still needs the CSRF token and the session cookie.
         _, body = self.request("GET", "/api/v1/security/csrf_token/")
         self._csrf = body["result"]

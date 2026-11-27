@@ -21,7 +21,7 @@ through the manual "Retag Docker image" workflow, after the version is proven in
 release candidate. Pin deployments by digest (the publish run summary prints the pin string).
 
 ## Checks
-CI runs eleven checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
+CI runs these checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
 
 ```
 scripts/check-no-provider-code.sh && scripts/test-no-provider-code.sh
@@ -31,12 +31,15 @@ scripts/smoke-test.sh savantly/superset:ci-check
 scripts/public-lockdown-check.sh savantly/superset:ci-check
 scripts/test-lockdown-check.sh savantly/superset:ci-check
 scripts/public-lockdown-check.sh savantly/superset:ci-check 240 "" scripts/deployed-shape.env
+{ cat scripts/deployed-shape.env; echo BI_API_KEYS=true; } > /tmp/keys-shape.env
+scripts/public-lockdown-check.sh savantly/superset:ci-check 240 "" /tmp/keys-shape.env
 scripts/guest-login-check.sh savantly/superset:ci-check
 scripts/test-guest-login-check.sh savantly/superset:ci-check
 RIG_SKIP_BUILD=1 rig/rls-check.sh     # after: docker tag savantly/superset:ci-check franops-bi-rig/superset:local
 RIG_SKIP_BUILD=1 rig/oidc-login-check.sh
 RIG_SKIP_BUILD=1 rig/mcp-auth-check.sh
 RIG_SKIP_BUILD=1 rig/hq-access-check.sh
+RIG_SKIP_BUILD=1 rig/roles-check.sh
 ```
 
 - `check-no-provider-code.sh` fails when a line of `config/` or the `Dockerfile` names Clerk, the identity
@@ -91,7 +94,8 @@ RIG_SKIP_BUILD=1 rig/hq-access-check.sh
   is made for them. `POST /login/` with
   the admin password makes no session, the admin API login gets `401`, and the service account still gets
   a token (S5.8). The check then searches the `rig-superset` log for each test email, the API key, and each
-  token that the fake provider issued, and fails on a hit. `COMPOSE_PROJECT_NAME`, `RIG_SUPERSET_PORT`, and
+  token that the fake provider issued, and fails on a hit. An org admin (`ADMIN`) signs in with `Admin`,
+  makes an API key with the session, and the check runs `franops-bi deploy` with that key (item 68). `COMPOSE_PROJECT_NAME`, `RIG_SUPERSET_PORT`, and
   `RIG_META_PORT` move the rig beside another one.
 
 ## Base image watch
@@ -127,6 +131,9 @@ does not start until these are set:
 - `MCP_JWT_ISSUER` defaults to `OIDC_ISSUER` or `OAUTH_ISSUER`. The token must hold the scope
   `superset:read`.
 - `FRANOPS_URL` and `FRANOPS_BI_API_KEY`, as for the web login.
+- `MCP_ALLOWED_CLIENT_IDS`: the OAuth clients whose tokens MCP accepts, separated by spaces or commas.
+  The provider gives the BI audience to each of its clients, so the resolver also reads the token's
+  `client_id` (else `azp`). An empty list refuses each token.
 
 The username of a token is `oidc:<sub>`, the user of the web login. At each resolution the image asks
 FranOps `userinfo` for the `sub`, and keeps an `HQ` answer for `MCP_ROLE_CACHE_SECONDS` (default `60`).
@@ -157,7 +164,7 @@ asset. The rig's tokens carry `superset:write`, which a write tool needs.
 
 ## Certify a draft (S7.5)
 `franops-bi certify chart|dashboard <id> --repo <brand repository>` runs as a reviewer: an account that BI
-lets write tags on another user's asset, which is `Admin` (Savantly operators, decision D-6). In order:
+lets write tags on another user's asset, which is `Admin` (Savantly operators and the FranOps org admin, decision D-6 as amended 2026-11-26). In order:
 it checks that the repository is a clean git work tree with a valid `bi/` and no branch
 `certify/<type>-<id>`; it exports the asset, and stops unless `bi/` already holds what it refers to (the
 dataset of a chart, each chart of a dashboard: certify the charts first); it removes `draft`, then adds
@@ -198,8 +205,9 @@ provider. It needs:
 At each login the image reads the claims of the ID token that Authlib verified (or the provider's
 userinfo when there is no ID token). It needs `sub`, and uses `email`, `given_name`, `family_name`, and
 `name` when present. The username is `oidc:<sub>`. The image then calls
-`GET {FRANOPS_URL}/api/data/bi/userinfo?sub=<sub>` with the key. `biRole: "HQ"` gives the `HQ` role
-(`AUTH_ROLES_MAPPING`, set again at each login). `NONE`, an answer other than `200`, no answer in time, or
+`GET {FRANOPS_URL}/api/data/bi/userinfo?sub=<sub>` with the key. `biRole: "HQ"` gives the `HQ` role, and
+`biRole: "ADMIN"` (the FranOps org admin) gives `Admin` (`AUTH_ROLES_MAPPING`, set again at each login).
+The org admin makes the first API key in BI (item 68). MCP refuses `ADMIN` and accepts `HQ` only. `NONE`, an answer other than `200`, no answer in time, or
 no FranOps configuration refuses the login. The log line of a login holds the provider, the `sub`, and
 the reason, never an email, a token, or the key. FAB also gives each OAuth user the registration role
 `Public`, which holds no permission. The `HQ` role must exist; `superset init` does not make it.
@@ -239,10 +247,25 @@ rig by `rig/make_fixture.py`.
 ```
 pip install -e tools/franops_bi
 franops-bi validate --dir bi/
-SUPERSET_PASSWORD=... franops-bi certify chart 42 --repo ../brand --url https://bi.example.com
-SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
-  franops-bi deploy --dir bi/ --url https://bi.example.com --username deployer
+SUPERSET_API_KEY=sst_... franops-bi certify chart 42 --repo ../brand --url https://bi.example.com
+SUPERSET_API_KEY=sst_... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
+  franops-bi deploy --dir bi/ --url https://bi.example.com
 ```
+
+- **Credentials.** Under OAuth the `db` login accepts the service account only, so `deploy` and `certify`
+  send the API key of an Admin (`SUPERSET_API_KEY`, S5.10). `BI_API_KEYS=true` turns API keys on; a user
+  makes and revokes a key in BI, and only Admin holds `ApiKey`. MCP keeps API keys off. With OAuth off,
+  `--username` and `SUPERSET_PASSWORD` log in with the `db` provider instead.
+- **Roles (S5.9).** `franops-bi roles apply` sets `HQ`, `Embed`, and `GuestIssuer` to exactly the role
+  table of `design/bi-image.md`. `HQ` gets `datasource_access` on each `certified` dataset; `Embed` and
+  `GuestIssuer` get the certified datasets of the dashboards with an embedded config only (item 69), and
+  the output names a dataset of an embedded dashboard that is not certified. After you turn on embedding
+  for a dashboard, run `deploy` or the init task, or BI refuses its guest tokens. It gives the
+  service account `BI_SERVICE_USERNAME` the role `GuestIssuer` alone (`BI_SERVICE_PASSWORD` sets its
+  password; with none, a missing account is not created). It runs in process, in the image. Run
+  `/app/franops-init.sh` as the one-off init task (`superset db upgrade`, `superset init`, then the
+  roles). After each import, `deploy` calls `POST /api/v1/franops/roles/apply/` (Admin only), so a newly
+  certified dataset gets its grants at once (`--no-apply-roles` skips it).
 
 - `validate` parses each YAML and exits 1 on a defect: a file that does not parse, a bad `metadata.yaml`,
   a missing required key, a duplicate `uuid`, a reference to an asset that is not in the folder, or `tags`

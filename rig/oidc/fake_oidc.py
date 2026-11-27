@@ -134,6 +134,12 @@ class Handler(BaseHTTPRequestHandler):
                    "scope": body.get("scope", "openid email profile superset:read")}
         if body.get("aud", "absent") is not None:
             payload["aud"] = body.get("aud", ISSUER)
+        # Item 53: a token of another client, or of no client (`"client_id": null`).
+        if "client_id" in body:
+            if body["client_id"] is None:
+                payload.pop("client_id")
+            else:
+                payload["client_id"] = body["client_id"]
         key = FOREIGN_KEY if body.get("foreign_key") else KEY
         token = jwt.encode(payload, key, algorithm="RS256", headers={"kid": KID})
         ISSUED.append(token)

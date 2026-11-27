@@ -3,9 +3,12 @@
     franops-bi validate --dir bi/
     franops-bi deploy   --dir bi/ --url https://bi.example.com
     franops-bi certify  chart 42 --repo ../brand --url https://bi.example.com
+    franops-bi roles apply                    (in process, inside the BI image)
 
 Credentials come from flags or the environment:
-    SUPERSET_URL, SUPERSET_USERNAME, SUPERSET_PASSWORD
+    SUPERSET_URL, SUPERSET_API_KEY            (an API key of an Admin; under OAuth, the only way)
+    SUPERSET_USERNAME, SUPERSET_PASSWORD      (the `db` login; OAuth off only)
+    BI_SERVICE_PASSWORD                       (roles apply: the service account's password)
     FRANOPS_BI_DB_PASSWORDS   JSON map: {"databases/<file>.yaml": "<password>"}
 The export masks each database password, so the first import into an empty instance needs it.
 """
@@ -36,6 +39,64 @@ def _db_passwords(args: argparse.Namespace) -> dict[str, str]:
             raise SystemExit(f"--db-password {item!r}: ${env_name} is not set")
         out[path] = os.environ[env_name]
     return out
+
+
+def connect(args: argparse.Namespace, command: str) -> Superset:
+    """The session of deploy and certify: the API key when one is set, else the `db` login."""
+    if not args.url:
+        raise SystemExit(f"{command}: set --url or SUPERSET_URL")
+    if args.api_key:
+        return Superset(args.url, api_key=args.api_key)
+    if not args.password:
+        raise SystemExit(f"{command}: set SUPERSET_API_KEY, or --password or SUPERSET_PASSWORD")
+    return Superset(args.url, args.username, args.password)
+
+
+ROLES_PATH = "/api/v1/franops/roles/apply/"
+
+
+def apply_roles_remote(client: Superset) -> int:
+    """POST the roles endpoint of the image (S5.9). Prints its summary. Returns the exit code."""
+    status, body = client.request("POST", ROLES_PATH, {}, expect=None)
+    if status != 200 or not isinstance(body, dict):
+        hint = " (is the image older than S5.9?)" if status == 404 else ""
+        print(f"error: {ROLES_PATH} returned HTTP {status}{hint}: {json.dumps(body, default=str)}",
+              file=sys.stderr)
+        return 1
+    from .roles import Result, RoleChange
+
+    result = Result(
+        roles=[RoleChange(n, r.get("added", []), r.get("removed", []))
+               for n, r in (body.get("roles") or {}).items()],
+        service_account=str(body.get("serviceAccount")),
+        datasets=int(body.get("datasets", 0)),
+        scorecard=int(body.get("scorecardDatasets", 0)),
+        uncertified=[str(x) for x in body.get("uncertifiedEmbedded") or []],
+    )
+    for line in result.lines():
+        print(line)
+    return 0
+
+
+def cmd_roles_apply(args: argparse.Namespace) -> int:
+    try:
+        from superset.app import create_app
+    except ImportError:
+        print("error: roles apply runs inside the BI image, in process "
+              "(from outside, deploy calls the image's roles endpoint)", file=sys.stderr)
+        return 1
+    from . import roles
+
+    app = create_app()
+    with app.app_context():
+        try:
+            result = roles.apply(roles.service_password_from_env(args.service_password_env))
+        except roles.RolesError as err:
+            print(f"error: {err}", file=sys.stderr)
+            return 1
+    for line in result.lines():
+        print(line)
+    return 0
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -112,15 +173,11 @@ def cmd_deploy(args: argparse.Namespace) -> int:
         for problem in err.problems:
             print(f"error: {problem}", file=sys.stderr)
         return 1
-    if not args.url:
-        raise SystemExit("deploy: set --url or SUPERSET_URL")
-    if not args.password:
-        raise SystemExit("deploy: set --password or SUPERSET_PASSWORD")
     blob = b.to_zip(b.rewrite(bundle))
     if args.zip_out:
         with open(args.zip_out, "wb") as fh:
             fh.write(blob)
-    client = Superset(args.url, args.username, args.password)
+    client = connect(args, "deploy")
     status, body = client.import_assets(blob, passwords=_db_passwords(args), overwrite=True)
     if status != 200:
         print(f"error: import returned HTTP {status}: {json.dumps(body, default=str)}",
@@ -142,15 +199,13 @@ def cmd_deploy(args: argparse.Namespace) -> int:
               + " (is TAGGING_SYSTEM on?)", file=sys.stderr)
         return 1
     print(f"checked: each {', '.join(types)} asset is tagged {b.CERTIFIED}")
+    if args.apply_roles:
+        return apply_roles_remote(client)
     return 0
 
 
 def cmd_certify(args: argparse.Namespace) -> int:
-    if not args.url:
-        raise SystemExit("certify: set --url or SUPERSET_URL")
-    if not args.password:
-        raise SystemExit("certify: set --password or SUPERSET_PASSWORD")
-    client = Superset(args.url, args.username, args.password)
+    client = connect(args, "certify")
     try:
         result = certify(client, args.type, args.id, args.repo)
     except CertifyError as err:
@@ -174,9 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("deploy", help="import the certified assets of a bi/ folder")
     d.add_argument("--dir", required=True)
-    d.add_argument("--url", default=os.environ.get("SUPERSET_URL"))
-    d.add_argument("--username", default=os.environ.get("SUPERSET_USERNAME", "admin"))
-    d.add_argument("--password", default=os.environ.get("SUPERSET_PASSWORD"))
+    _credentials(d)
     d.add_argument(
         "--db-password",
         action="append",
@@ -190,6 +243,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="tag each dataset `certified` through the tag API, because the import cannot "
         "(default: on)",
     )
+    d.add_argument(
+        "--apply-roles",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="after the import, set the BI roles through the image's roles endpoint (S5.9) "
+        "(default: on)",
+    )
     d.add_argument("--zip-out", help="also write the rewritten ZIP to this path")
     d.set_defaults(func=cmd_deploy)
 
@@ -200,11 +260,35 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("type", choices=sorted(TYPES))
     c.add_argument("id", type=int)
     c.add_argument("--repo", required=True, help="the brand repository; its bi/ folder gets the YAML")
-    c.add_argument("--url", default=os.environ.get("SUPERSET_URL"))
-    c.add_argument("--username", default=os.environ.get("SUPERSET_USERNAME", "admin"))
-    c.add_argument("--password", default=os.environ.get("SUPERSET_PASSWORD"))
+    _credentials(c)
     c.set_defaults(func=cmd_certify)
+
+    r = sub.add_parser("roles", help="the BI roles and the service account (S5.9)")
+    rsub = r.add_subparsers(dest="roles_command", required=True)
+    ra = rsub.add_parser(
+        "apply", help="in process, inside the BI image: set HQ, Embed, GuestIssuer exactly"
+    )
+    ra.add_argument(
+        "--service-password-env",
+        default="BI_SERVICE_PASSWORD",
+        metavar="ENV_VAR",
+        help="the environment variable that holds the service account's password "
+        "(default: BI_SERVICE_PASSWORD)",
+    )
+    ra.set_defaults(func=cmd_roles_apply)
     return p
+
+
+def _credentials(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--url", default=os.environ.get("SUPERSET_URL"))
+    parser.add_argument(
+        "--api-key",
+        default=os.environ.get("SUPERSET_API_KEY"),
+        help="an API key (sst_...) of an Admin; prefer SUPERSET_API_KEY, so the key stays out "
+        "of the process list",
+    )
+    parser.add_argument("--username", default=os.environ.get("SUPERSET_USERNAME", "admin"))
+    parser.add_argument("--password", default=os.environ.get("SUPERSET_PASSWORD"))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

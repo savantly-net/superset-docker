@@ -92,7 +92,7 @@ def main():
 
         certified_assets_clean("after the deploy")
 
-        # The HQ grants of design/bi-image.md (rig only, item 49).
+        # The HQ grants of design/bi-image.md. Since S5.9 the deploy sets them; these lines are a no-op.
         hq = sm.find_role("HQ") or sm.add_role("HQ")
         grants = [("can_read", "Chart"), ("can_write", "Chart"), ("can_read", "Dashboard"),
                   ("can_write", "Dashboard"), ("can_read", "Tag"), ("can_list", "Tags")]

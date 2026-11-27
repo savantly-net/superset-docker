@@ -1,0 +1,4 @@
+# The build context: keep local caches out of the image (S5.9 copies tools/franops_bi).
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache

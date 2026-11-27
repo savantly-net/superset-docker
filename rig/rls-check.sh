@@ -40,6 +40,10 @@ FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml":"warehouse-rig-pass"}' \
   python3 -m franops_bi deploy --dir tests/fixtures/bi --url "$URL" \
   --username admin --password "${RIG_ADMIN_PASSWORD:-admin-rig-pass}"
 rig/rig.sh rls-plan 2>/dev/null > "$PLAN"
+# The product's roles apply (item 69) sets Embed and GuestIssuer after the embed, so each guest token
+# below runs on the grants that the image sets, not on the plan's.
+docker compose -f rig/compose.yml exec -T rig-superset /app/franops-init.sh 2>&1 | grep "^role\|^roles:" \
+  || { echo "FAIL: the init task did not apply the roles" >&2; exit 1; }
 echo "plan: $(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(len(p["charts"]), "certified charts")' "$PLAN")"
 
 echo "== RLS check, OAuth off"

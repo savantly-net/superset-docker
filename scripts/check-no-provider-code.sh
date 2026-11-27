@@ -3,12 +3,12 @@
 # is read from its discovery document, and its name is configuration. This check fails when a
 # file that goes into the image names Clerk, the provider of the MVP.
 #
-# Usage: scripts/check-no-provider-code.sh [path ...]   (default: config/ and the Dockerfile)
+# Usage: scripts/check-no-provider-code.sh [path ...]   (default: config/, the Dockerfile, and franops-bi)
 # scripts/test-no-provider-code.sh proves that it fails on a hit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ "$#" -eq 0 ]; then set -- config Dockerfile; fi
+if [ "$#" -eq 0 ]; then set -- config Dockerfile tools/franops_bi/src; fi
 PATTERN="${PROVIDER_PATTERN:-clerk}"
 
 if hits="$(grep -rniI --exclude-dir=__pycache__ -e "$PATTERN" "$@")"; then

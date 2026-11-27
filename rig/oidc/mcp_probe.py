@@ -18,6 +18,7 @@ for each check, and exits 0 when each check passes.
 | a franchisee token (FranOps: NONE) | the call fails; no user `oidc:<sub>` |
 | an HQ token while FranOps answers 502 | the call fails |
 | HQ, then FranOps answers NONE | the call fails after MCP_ROLE_CACHE_SECONDS |
+| HQ, then a web login makes the row Admin | the next call fails, inside MCP_ROLE_CACHE_SECONDS |
 | a client registration request, the OAuth metadata documents | 4xx |
 """
 
@@ -183,6 +184,11 @@ def main():
             check(f"{label}: 401", status == 401, status)
         status, _, _ = call("list_dashboards", mint("hq", scope="openid email profile"))
         check("no superset:read scope: refused", status in (401, 403), status)
+        # Item 53 (NFR-6): the provider gives the BI audience to each of its clients.
+        for label, client in (("a client not in MCP_ALLOWED_CLIENT_IDS", "other-clerk-client"),
+                              ("a token with no client_id", None)):
+            status, ok, text = call("list_dashboards", mint("hq", client_id=client))
+            check(f"{label}: refused", status in (401, 403) or not ok, f"{status} {text[:80]}")
         check("no refused token made a user", user_of("hq") is None, None)
 
         # 2. An HQ token, with no Superset user yet: the resolver makes it.
@@ -252,6 +258,11 @@ def main():
         status, ok, _ = call("list_dashboards", mint("franops_down"))
         check("FranOps 502: the call fails, and no user", not ok and user_of("franops_down") is None, status)
 
+        # 5a. An org admin (FranOps ADMIN) is refused: MCP is for HQ only (S7.1, item 68).
+        status, ok, text = call("list_dashboards", mint("org_admin"))
+        check("ADMIN: the token passes, and the call fails", status == 200 and not ok, f"{status} {text[:70]}")
+        check("ADMIN: no user oidc:<sub>", user_of("org_admin") is None, None)
+
         # 6. Demotion: HQ at the first call, then NONE.
         token = mint("mcp_demoted")
         _, ok_first, _ = call("list_dashboards", token)
@@ -260,6 +271,22 @@ def main():
         _, ok_after, text = call("list_dashboards", token)
         check("demoted: HQ runs, and after the cache the same valid token fails",
               ok_first and not ok_after, f"first {ok_first}, after {ok_after}: {text[:60]}")
+
+        # 6a. Promotion inside the cache window: HQ at the first call, then a web login syncs the
+        # row to Admin. The next call, still inside MCP_ROLE_CACHE_SECONDS, must not run as Admin.
+        token = mint("hq")
+        _, ok_first, _ = call("list_dashboards", token)
+        user = user_of("hq")
+        admin = sm.find_role("Admin")
+        if user is not None and admin is not None:
+            user.roles = [admin]
+            db.session.commit()
+        set_franops_role("hq", "ADMIN")
+        _, ok_after, text = call("list_dashboards", token)
+        check("promoted inside the cache window: HQ runs, then the call fails at once",
+              ok_first and admin is not None and not ok_after,
+              f"first {ok_first}, after {ok_after}: {text[:60]}")
+        set_franops_role("hq", "HQ")
 
         # 7. Dynamic client registration is off (NFR-6).
         for path, method, body in (("/register", "POST", {"redirect_uris": ["http://127.0.0.1/cb"]}),

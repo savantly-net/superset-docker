@@ -35,7 +35,8 @@ ISSUER = os.environ.get("OAUTH_ISSUER", "").rstrip("/")
 FRANOPS = os.environ.get("FRANOPS_URL", "").rstrip("/")
 ADMIN_PASSWORD = os.environ.get("RIG_ADMIN_PASSWORD", "admin-rig-pass")
 SERVICE = os.environ.get("BI_SERVICE_USERNAME", "franops_guest_issuer")
-SERVICE_PASSWORD = "rig-service-pass"
+# The rig env value: the roles endpoint (called with the org admin's key) sets this password.
+SERVICE_PASSWORD = os.environ.get("BI_SERVICE_PASSWORD") or "rig-service-pass"
 ISSUER_ROLE = os.environ.get("GUEST_ISSUER_ROLE", "GuestIssuer")
 # Roles that FAB may give an OAuth user next to HQ. `Public` is the registration role; it holds
 # no permission (the lockdown check reads it).
@@ -196,6 +197,29 @@ def main():
               status == 302 and "/login" not in location and roles3 is not None and "HQ" in roles3
               and user3 is not None and user3.email == USERS["hq_bare"]["franopsEmail"],
               f"{status} -> {location}; roles {roles3}")
+
+        # 3a. An org admin (FranOps ADMIN) signs in with Admin, and makes an API key in BI (item 68).
+        browser = Browser()
+        status, location = browser.sign_in("org_admin")
+        roles_a, _ = user_roles("org_admin")
+        check("ADMIN: signed in, with the Admin role and no FranOps role",
+              status == 302 and "/login" not in location and roles_a is not None and "Admin" in roles_a
+              and set(roles_a) - {"Admin"} <= ALLOWED_EXTRA_ROLES, f"{status} -> {location}; {roles_a}")
+        status, _, body = browser.request(f"{BASE}/api/v1/security/csrf_token/")
+        csrf = json.loads(body).get("result", "") if status == 200 else ""
+        status, _, body = browser.request(
+            f"{BASE}/api/v1/security/api_keys/", data=json.dumps({"name": "rig-first-key"}).encode(),
+            headers={"Content-Type": "application/json", "X-CSRFToken": csrf, "Referer": f"{BASE}/"},
+            method="POST")
+        key = json.loads(body).get("result", {}).get("key", "") if status == 201 else ""
+        check("ADMIN: the session makes an API key in BI", status == 201 and bool(key), status)
+        if key:
+            with open(os.environ.get("RIG_KEY_FILE", "/tmp/rig-admin-key"), "w") as handle:
+                handle.write(key)
+            status, _, _ = Browser().request(
+                f"{BASE}/api/v1/franops/roles/apply/", data=b"{}", method="POST",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+            check("ADMIN: the key calls the Admin-only roles endpoint", status == 200, status)
 
         # 4. A franchisee is refused at login.
         browser = Browser()

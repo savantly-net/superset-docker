@@ -194,7 +194,10 @@ class LoginRefused(Exception):
 
 # The BI role that the FranOps `userinfo` endpoint returns, mapped to the Superset role key.
 # AUTH_ROLES_MAPPING maps the key to the Superset role. Each other value refuses the login.
-FRANOPS_BI_ROLES = {"HQ": "HQ"}
+# `ADMIN` (the FranOps org admin) gets Admin on the web login, so that a person can make the first
+# API key in BI under OAuth (S5.10, item 68). MCP accepts `HQ` only (S7.1).
+FRANOPS_BI_ROLES = {"HQ": "HQ", "ADMIN": "ADMIN"}
+MCP_ROLE_KEY = "HQ"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -288,7 +291,15 @@ def refuse_taken_email(sm, userinfo: dict) -> None:
             raise LoginRefused("another Superset user has the same email")
 
 
-class CustomSsoSecurityManager(SupersetSecurityManager):
+class FranopsSecurityManager(SupersetSecurityManager):
+    """The security manager of each mode. OAuth mode adds CustomSsoSecurityManager on top."""
+
+    # The roles endpoint (S5.9, franops_api.py) is for Admin only: `superset init` gives Alpha
+    # and Gamma each permission of a view that is not in this set.
+    ADMIN_ONLY_VIEW_MENUS = SupersetSecurityManager.ADMIN_ONLY_VIEW_MENUS | {"FranopsRoles"}
+
+
+class CustomSsoSecurityManager(FranopsSecurityManager):
     def auth_user_db(self, username, password):
         """Under OAuth, the API password login is open to the service account only (S5.8).
 
@@ -405,13 +416,14 @@ AUTH_USER_REGISTRATION_ROLE = get_env_variable("AUTH_USER_REGISTRATION_ROLE", "P
 # the default config does not define it, so DB-auth mode 500s without this. Empty = no captcha.
 RECAPTCHA_PUBLIC_KEY = ""
 
+CUSTOM_SECURITY_MANAGER = FranopsSecurityManager
 if enable_oauth:
     CUSTOM_SECURITY_MANAGER = CustomSsoSecurityManager
     # S5.2: an OAuth user is created at the first login, and its roles are set again at each
     # login from the FranOps answer (`role_keys`). These are fixed under OAuth: the env value
     # of AUTH_USER_REGISTRATION is a string, and "false" would be truthy.
     AUTH_USER_REGISTRATION = True
-    AUTH_ROLES_MAPPING = {"HQ": ["HQ"]}
+    AUTH_ROLES_MAPPING = {"HQ": ["HQ"], "ADMIN": ["Admin"]}
     AUTH_ROLES_SYNC_AT_LOGIN = True
     # FAB adds the registration role to each OAuth user. `Public` holds no permission (the
     # lockdown check reads it), so the registration role grants nothing.
@@ -434,6 +446,14 @@ embedding_enabled = _env_flag("EMBEDDED_SUPERSET")
 FEATURE_FLAGS["EMBEDDED_SUPERSET"] = embedding_enabled
 # No Redis on the rig: ALERT_REPORTS=false turns the reports scheduler off.
 FEATURE_FLAGS["ALERT_REPORTS"] = _env_flag("ALERT_REPORTS", True)
+
+# API keys (S5.10, item 57, chosen 2026-11-26). Under OAuth the `db` login accepts the service
+# account only, so `franops-bi deploy` and `certify` reach BI with the API key of an Admin, over
+# HTTPS from CI or a laptop, with no shell on the container. BI_API_KEYS=true turns them on. A
+# user makes and revokes a key in BI; the view ApiKey is Admin only. MCP keeps API keys off
+# (MCP_API_KEY_ENABLED below), so an MCP caller still needs an OIDC token.
+FAB_API_KEY_ENABLED = _env_flag("BI_API_KEYS", False)
+FEATURE_FLAGS["FAB_API_KEY_ENABLED"] = FAB_API_KEY_ENABLED
 
 if embedding_enabled:
     import copy
@@ -474,6 +494,12 @@ MCP_AUTH_ENABLED = True
 MCP_API_KEY_ENABLED = False
 MCP_EMBEDDED_GUEST_AUTH_ENABLED = False
 MCP_DEV_USERNAME = None
+# The OAuth clients whose tokens MCP accepts (item 53, NFR-6, chosen 2026-11-26). The provider
+# gives the BI audience to each of its clients, so the audience alone admits any client. The
+# resolver reads the token's `client_id`, else `azp`. An empty list refuses each token.
+MCP_ALLOWED_CLIENT_IDS = frozenset(
+    c for c in os.environ.get("MCP_ALLOWED_CLIENT_IDS", "").replace(",", " ").split() if c
+)
 MCP_JWT_ALGORITHM = "RS256"
 # The provider's issuer, as for the web login. The JWKS URI is configuration, not derived from
 # the issuer: the path differs from provider to provider.
@@ -532,18 +558,32 @@ def mcp_user_resolver(app, access_token) -> str:
     if not sub:
         raise MCPUserRefused("the token has no sub")
     username = f"oidc:{sub}"
+    client_id = str(claims.get("client_id") or claims.get("azp") or "").strip()
+    if client_id not in MCP_ALLOWED_CLIENT_IDS:
+        raise MCPUserRefused("the token's client is not in MCP_ALLOWED_CLIENT_IDS")
 
     import time
-
-    if _mcp_hq_until.get(sub, 0.0) > time.monotonic():
-        return username
-    _mcp_hq_until.pop(sub, None)
 
     from superset import security_manager as sm
     from superset.extensions import db
 
+    if _mcp_hq_until.get(sub, 0.0) > time.monotonic():
+        # The cache skips the FranOps call, never the stored roles. A web login in the cache
+        # window can sync the same user row to Admin (item 68), and Superset runs the call with
+        # the stored roles. Keep the cached path only while the row holds HQ and no other role.
+        cached = sm.find_user(username=username)
+        names = {r.name for r in cached.roles} if cached is not None else set()
+        if FRANOPS_BI_ROLES["HQ"] in names and names <= {FRANOPS_BI_ROLES["HQ"], AUTH_USER_REGISTRATION_ROLE}:
+            return username
+        logger.info("mcp cache dropped: sub=%s: the stored roles are not HQ only", sub)
+    _mcp_hq_until.pop(sub, None)
+
     try:
         userinfo = oidc_user_info(claims, franops_bi_role(sub))
+        if userinfo["role_keys"] != [MCP_ROLE_KEY]:
+            # An org admin is Admin on the web. Over MCP, Admin would reach raw tables (S7.1),
+            # and an HQ sync here would take Admin off the same user row (item 68).
+            raise LoginRefused(f"MCP is for {MCP_ROLE_KEY} only, not {userinfo['role_keys'][0]}")
         refuse_taken_email(sm, userinfo)
         hq = sm.find_role(FRANOPS_BI_ROLES["HQ"])
         if hq is None:
@@ -692,7 +732,7 @@ if not _rls_check_is_off(get_env_variable("GUEST_TOKEN_REQUIRE_RLS", "true")):
 # tag `draft`, unless an import from the brand repository made it (`is_managed_externally`).
 # rig/hq-access-check.sh proves it on each build. The hook sits beside this file in the image
 # (/app/draft_hook.py). A superset_config_docker.py that sets FLASK_APP_MUTATOR replaces the
-# hook: call _install_draft_hook(app) from that mutator.
+# hook and the roles endpoint: call _franops_app_mutator(app) from that mutator.
 # ---------------------------------------------------------------------------------------------
 def _install_draft_hook(app) -> None:
     import importlib.util
@@ -709,7 +749,27 @@ def _install_draft_hook(app) -> None:
     module.install(app)
 
 
-FLASK_APP_MUTATOR = _install_draft_hook
+def _install_franops_api(app) -> None:
+    """Register POST /api/v1/franops/roles/apply/ (S5.9). The module sits beside this file."""
+    import importlib.util
+    import sys
+
+    module = sys.modules.get("franops_api")
+    if module is None:
+        path = Path(__file__).with_name("franops_api.py")
+        spec = importlib.util.spec_from_file_location("franops_api", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules["franops_api"] = module
+    module.install(app)
+
+
+def _franops_app_mutator(app) -> None:
+    _install_draft_hook(app)
+    _install_franops_api(app)
+
+
+FLASK_APP_MUTATOR = _franops_app_mutator
 
 #
 # Optionally import superset_config_docker.py (which will have been included on
