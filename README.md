@@ -163,7 +163,7 @@ asset. The rig's tokens carry `superset:write`, which a write tool needs.
 
 ## Certify a draft (S7.5)
 `franops-bi certify chart|dashboard <id> --repo <brand repository>` runs as a reviewer: an account that BI
-lets write tags on another user's asset, which is `Admin` (Savantly operators, decision D-6). In order:
+lets write tags on another user's asset, which is `Admin` (Savantly operators and the FranOps org admin, decision D-6 as amended 2026-11-26). In order:
 it checks that the repository is a clean git work tree with a valid `bi/` and no branch
 `certify/<type>-<id>`; it exports the asset, and stops unless `bi/` already holds what it refers to (the
 dataset of a chart, each chart of a dashboard: certify the charts first); it removes `draft`, then adds
