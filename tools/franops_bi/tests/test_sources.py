@@ -146,3 +146,16 @@ def test_a_refused_key_fails_the_deploy(franops):
     a = args("--franops-url", url, "--franops-api-key", "wrong", "--sources-dir", str(SOURCES))
     with pytest.raises(SystemExit, match="HTTP 401"):
         cli.source_bundles(a, b.load(BRAND))
+
+
+def test_a_key_that_is_not_a_slug_is_refused(franops):
+    url, stub = franops
+    stub.keys = ["../../etc"]
+    a = args("--franops-url", url, "--franops-api-key", KEY, "--sources-dir", str(SOURCES))
+    with pytest.raises(SystemExit, match="not a slug"):
+        cli.source_bundles(a, b.load(BRAND))
+
+
+def test_validate_source_checks_a_source_folder():
+    assert cli.main(["validate", "--dir", str(SOURCES / "callrail"), "--source"]) == 0
+    assert cli.main(["validate", "--dir", str(SOURCES / "callrail")]) == 1

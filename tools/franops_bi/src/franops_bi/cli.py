@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -105,7 +106,7 @@ def cmd_roles_apply(args: argparse.Namespace) -> int:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     try:
-        bundle = b.load(args.dir)
+        bundle = b.load(args.dir, source=args.source)
     except b.BundleError as err:
         for problem in err.problems:
             print(f"error: {problem}", file=sys.stderr)
@@ -171,6 +172,8 @@ def untagged(client: Superset, bundle: b.Bundle, types: Sequence[str]) -> list[s
 
 
 SOURCES_PATH = "/api/data/bi/sources"
+# A source key becomes a folder name, so it must be a plain slug.
+SOURCE_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 def default_sources_dir(brand_dir: str) -> pathlib.Path:
@@ -218,6 +221,9 @@ def source_bundles(args: argparse.Namespace, brand: b.Bundle) -> list[tuple[str,
             f"deploy: {root} does not exist; run `dbt deps` in the brand repository, "
             "or pass --sources-dir"
         )
+    bad = [k for k in keys if not SOURCE_KEY.match(k)]
+    if bad:
+        raise SystemExit(f"deploy: FranOps returned a source key that is not a slug: {bad!r}")
     out = []
     for key in keys:
         folder = root / key
@@ -301,6 +307,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     v = sub.add_parser("validate", help="parse each YAML of a bi/ folder; exit 1 on a defect")
     v.add_argument("--dir", required=True)
+    v.add_argument(
+        "--source",
+        action="store_true",
+        help="the folder is bi/<sourceKey>/ of franops_sources: no database, and each dataset "
+        "names the warehouse UUID (S4.11)",
+    )
     v.set_defaults(func=cmd_validate)
 
     d = sub.add_parser("deploy", help="import the certified assets of a bi/ folder")

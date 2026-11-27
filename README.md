@@ -279,6 +279,8 @@ SUPERSET_API_KEY=sst_... FRANOPS_BI_SOURCES_KEY=fran_... \
   roles). After each import, `deploy` calls `POST /api/v1/franops/roles/apply/` (Admin only), so a newly
   certified dataset gets its grants at once (`--no-apply-roles` skips it).
 
+- `validate --source` checks `bi/<sourceKey>/` of `franops_sources`: no database, and each dataset names the
+  warehouse UUID (S4.11).
 - `validate` parses each YAML and exits 1 on a defect: a file that does not parse, a bad `metadata.yaml`,
   a missing required key, a duplicate `uuid`, a reference to an asset that is not in the folder, or `tags`
   on a database or a dataset.
