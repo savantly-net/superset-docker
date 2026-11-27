@@ -21,7 +21,7 @@ through the manual "Retag Docker image" workflow, after the version is proven in
 release candidate. Pin deployments by digest (the publish run summary prints the pin string).
 
 ## Checks
-CI runs eleven checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
+CI runs these checks on every event (pull request, push to `main`, tag, manual run) before any push to Docker Hub:
 
 ```
 scripts/check-no-provider-code.sh && scripts/test-no-provider-code.sh
@@ -37,6 +37,7 @@ RIG_SKIP_BUILD=1 rig/rls-check.sh     # after: docker tag savantly/superset:ci-c
 RIG_SKIP_BUILD=1 rig/oidc-login-check.sh
 RIG_SKIP_BUILD=1 rig/mcp-auth-check.sh
 RIG_SKIP_BUILD=1 rig/hq-access-check.sh
+RIG_SKIP_BUILD=1 rig/roles-check.sh
 ```
 
 - `check-no-provider-code.sh` fails when a line of `config/` or the `Dockerfile` names Clerk, the identity
@@ -127,6 +128,9 @@ does not start until these are set:
 - `MCP_JWT_ISSUER` defaults to `OIDC_ISSUER` or `OAUTH_ISSUER`. The token must hold the scope
   `superset:read`.
 - `FRANOPS_URL` and `FRANOPS_BI_API_KEY`, as for the web login.
+- `MCP_ALLOWED_CLIENT_IDS`: the OAuth clients whose tokens MCP accepts, separated by spaces or commas.
+  The provider gives the BI audience to each of its clients, so the resolver also reads the token's
+  `client_id` (else `azp`). An empty list refuses each token.
 
 The username of a token is `oidc:<sub>`, the user of the web login. At each resolution the image asks
 FranOps `userinfo` for the `sub`, and keeps an `HQ` answer for `MCP_ROLE_CACHE_SECONDS` (default `60`).
@@ -239,10 +243,22 @@ rig by `rig/make_fixture.py`.
 ```
 pip install -e tools/franops_bi
 franops-bi validate --dir bi/
-SUPERSET_PASSWORD=... franops-bi certify chart 42 --repo ../brand --url https://bi.example.com
-SUPERSET_PASSWORD=... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
-  franops-bi deploy --dir bi/ --url https://bi.example.com --username deployer
+SUPERSET_API_KEY=sst_... franops-bi certify chart 42 --repo ../brand --url https://bi.example.com
+SUPERSET_API_KEY=sst_... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
+  franops-bi deploy --dir bi/ --url https://bi.example.com
 ```
+
+- **Credentials.** Under OAuth the `db` login accepts the service account only, so `deploy` and `certify`
+  send the API key of an Admin (`SUPERSET_API_KEY`, S5.10). `BI_API_KEYS=true` turns API keys on; a user
+  makes and revokes a key in BI, and only Admin holds `ApiKey`. MCP keeps API keys off. With OAuth off,
+  `--username` and `SUPERSET_PASSWORD` log in with the `db` provider instead.
+- **Roles (S5.9).** `franops-bi roles apply` sets `HQ`, `Embed`, and `GuestIssuer` to exactly the role
+  table of `design/bi-image.md`, with `datasource_access` on each `certified` dataset, and gives the
+  service account `BI_SERVICE_USERNAME` the role `GuestIssuer` alone (`BI_SERVICE_PASSWORD` sets its
+  password; with none, a missing account is not created). It runs in process, in the image. Run
+  `/app/franops-init.sh` as the one-off init task (`superset db upgrade`, `superset init`, then the
+  roles). After each import, `deploy` calls `POST /api/v1/franops/roles/apply/` (Admin only), so a newly
+  certified dataset gets its grants at once (`--no-apply-roles` skips it).
 
 - `validate` parses each YAML and exits 1 on a defect: a file that does not parse, a bad `metadata.yaml`,
   a missing required key, a duplicate `uuid`, a reference to an asset that is not in the folder, or `tags`

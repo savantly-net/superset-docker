@@ -183,6 +183,11 @@ def main():
             check(f"{label}: 401", status == 401, status)
         status, _, _ = call("list_dashboards", mint("hq", scope="openid email profile"))
         check("no superset:read scope: refused", status in (401, 403), status)
+        # Item 53 (NFR-6): the provider gives the BI audience to each of its clients.
+        for label, client in (("a client not in MCP_ALLOWED_CLIENT_IDS", "other-clerk-client"),
+                              ("a token with no client_id", None)):
+            status, ok, text = call("list_dashboards", mint("hq", client_id=client))
+            check(f"{label}: refused", status in (401, 403) or not ok, f"{status} {text[:80]}")
         check("no refused token made a user", user_of("hq") is None, None)
 
         # 2. An HQ token, with no Superset user yet: the resolver makes it.

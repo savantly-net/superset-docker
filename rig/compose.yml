@@ -37,6 +37,9 @@ x-superset: &superset
     GUEST_TOKEN_REQUIRE_RLS: ${RIG_GUEST_TOKEN_REQUIRE_RLS:-true}
     SERVER_WORKER_AMOUNT: "1"
     RIG_ADMIN_PASSWORD: ${RIG_ADMIN_PASSWORD:-admin-rig-pass}
+    # S5.10: API keys on; S5.9: the service account's password, the same as setup_rls_check.py's.
+    BI_API_KEYS: "true"
+    BI_SERVICE_PASSWORD: ${RIG_SERVICE_PASSWORD:-svc-rig-pass}
   volumes:
     - ./pythonpath:/app/pythonpath:ro
 
