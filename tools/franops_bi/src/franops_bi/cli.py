@@ -1,13 +1,14 @@
 """franops-bi: deploy and check the certified assets of a brand repository's `bi/` folder.
 
     franops-bi validate --dir bi/
-    franops-bi deploy   --dir bi/ --url https://bi.example.com
+    franops-bi deploy   --dir bi/ --url https://bi.example.com --franops-url https://franops.io
     franops-bi certify  chart 42 --repo ../brand --url https://bi.example.com
     franops-bi roles apply                    (in process, inside the BI image)
 
 Credentials come from flags or the environment:
     SUPERSET_URL, SUPERSET_API_KEY            (an API key of an Admin; under OAuth, the only way)
     SUPERSET_USERNAME, SUPERSET_PASSWORD      (the `db` login; OAuth off only)
+    FRANOPS_URL, FRANOPS_BI_SOURCES_KEY       (deploy: the source keys; a data_bi:sources key)
     BI_SERVICE_PASSWORD                       (roles apply: the service account's password)
     FRANOPS_BI_DB_PASSWORDS   JSON map: {"databases/<file>.yaml": "<password>"}
 The export masks each database password, so the first import into an empty instance needs it.
@@ -18,7 +19,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
 import sys
+import urllib.error
+import urllib.request
 from typing import Sequence
 
 from . import bundle as b
@@ -166,39 +170,111 @@ def untagged(client: Superset, bundle: b.Bundle, types: Sequence[str]) -> list[s
     return missing
 
 
-def cmd_deploy(args: argparse.Namespace) -> int:
+SOURCES_PATH = "/api/data/bi/sources"
+
+
+def default_sources_dir(brand_dir: str) -> pathlib.Path:
+    """`dbt_packages/franops_sources/bi` beside the brand's `bi/`, after `dbt deps` (S4.11)."""
+    return pathlib.Path(brand_dir).resolve().parent / "dbt_packages" / "franops_sources" / "bi"
+
+
+def read_source_keys(franops_url: str, api_key: str) -> list[str]:
+    """GET the organization's source keys from FranOps with a `data_bi:sources` key (S4.11)."""
+    req = urllib.request.Request(
+        franops_url.rstrip("/") + SOURCES_PATH,
+        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+    )
     try:
-        bundle = b.load(args.dir)
-    except b.BundleError as err:
-        for problem in err.problems:
-            print(f"error: {problem}", file=sys.stderr)
-        return 1
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        raise SystemExit(f"deploy: FranOps {SOURCES_PATH} returned HTTP {err.code}") from err
+    except (urllib.error.URLError, ValueError) as err:
+        raise SystemExit(f"deploy: FranOps {SOURCES_PATH} did not answer: {err}") from err
+    keys = body.get("sourceKeys") if isinstance(body, dict) else None
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        raise SystemExit(f"deploy: FranOps {SOURCES_PATH} returned no sourceKeys list")
+    return keys
+
+
+def source_bundles(args: argparse.Namespace, brand: b.Bundle) -> list[tuple[str, b.Bundle]]:
+    """The import of each `bi/<sourceKey>/` of `franops_sources`, merged with the brand's
+    warehouse database, in the order of the keys. A key with no folder imports nothing."""
+    if args.no_sources:
+        print("sources: skipped (--no-sources)")
+        return []
+    if not args.franops_url or not args.franops_api_key:
+        raise SystemExit(
+            "deploy: set --franops-url (FRANOPS_URL) and FRANOPS_BI_SOURCES_KEY, a FranOps API "
+            "key with data_bi:sources, or pass --no-sources"
+        )
+    keys = read_source_keys(args.franops_url, args.franops_api_key)
+    print("sources: " + (", ".join(keys) if keys else "none configured"))
+    if not keys:
+        return []
+    root = pathlib.Path(args.sources_dir) if args.sources_dir else default_sources_dir(args.dir)
+    if not root.is_dir():
+        raise SystemExit(
+            f"deploy: {root} does not exist; run `dbt deps` in the brand repository, "
+            "or pass --sources-dir"
+        )
+    out = []
+    for key in keys:
+        folder = root / key
+        if not folder.is_dir():
+            print(f"sources: {key} has no bi/ folder in franops_sources; nothing to import")
+            continue
+        out.append((key, b.merge(b.load(folder, source=True), brand)))
+    return out
+
+
+def import_bundle(client: Superset, args: argparse.Namespace, label: str, bundle: b.Bundle) -> int:
+    """Import one bundle, tag its datasets, and read the tags back. Returns the exit code."""
     blob = b.to_zip(b.rewrite(bundle))
     if args.zip_out:
-        with open(args.zip_out, "wb") as fh:
+        out = args.zip_out if label == "brand" else f"{args.zip_out}.{label}"
+        with open(out, "wb") as fh:
             fh.write(blob)
-    client = connect(args, "deploy")
     status, body = client.import_assets(blob, passwords=_db_passwords(args), overwrite=True)
     if status != 200:
-        print(f"error: import returned HTTP {status}: {json.dumps(body, default=str)}",
+        print(f"error: {label}: import returned HTTP {status}: {json.dumps(body, default=str)}",
               file=sys.stderr)
         return 1
     counts = bundle.counts()
-    print("imported: " + ", ".join(f"{n} {t}" for t, n in counts.items()))
+    print(f"imported {label}: " + ", ".join(f"{n} {t}" for t, n in counts.items()))
     types = list(b.TAGGED_TYPES)
     if args.tag_datasets:
         ids = tag_datasets(client, bundle)
         print(f"tagged {len(ids)} datasets {b.CERTIFIED} through the tag API")
         if len(ids) != len(bundle.assets("datasets")):
-            print(f"error: {len(ids)} of {len(bundle.assets('datasets'))} datasets found after "
-                  "the import", file=sys.stderr)
+            print(f"error: {label}: {len(ids)} of {len(bundle.assets('datasets'))} datasets found "
+                  "after the import", file=sys.stderr)
             return 1
     missing = untagged(client, bundle, types)
     if missing:
-        print(f"error: not tagged {b.CERTIFIED}: " + "; ".join(missing)
+        print(f"error: {label}: not tagged {b.CERTIFIED}: " + "; ".join(missing)
               + " (is TAGGING_SYSTEM on?)", file=sys.stderr)
         return 1
-    print(f"checked: each {', '.join(types)} asset is tagged {b.CERTIFIED}")
+    print(f"checked {label}: each {', '.join(types)} asset is tagged {b.CERTIFIED}")
+    return 0
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    """S4.11: import `bi/<sourceKey>/` of `franops_sources` for each source key of the
+    organization, then the brand `bi/` (S5.5), then set the roles (S5.9)."""
+    try:
+        brand = b.load(args.dir)
+        sources = source_bundles(args, brand)
+    except b.BundleError as err:
+        for problem in err.problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 1
+    client = connect(args, "deploy")
+    for key, bundle in sources:
+        if import_bundle(client, args, key, bundle):
+            return 1
+    if import_bundle(client, args, "brand", brand):
+        return 1
     if args.apply_roles:
         return apply_roles_remote(client)
     return 0
@@ -251,6 +327,27 @@ def build_parser() -> argparse.ArgumentParser:
         "(default: on)",
     )
     d.add_argument("--zip-out", help="also write the rewritten ZIP to this path")
+    d.add_argument(
+        "--franops-url",
+        default=os.environ.get("FRANOPS_URL"),
+        help="FranOps, which lists the organization's source keys (S4.11)",
+    )
+    d.add_argument(
+        "--franops-api-key",
+        default=os.environ.get("FRANOPS_BI_SOURCES_KEY"),
+        help="a FranOps API key whose only scope is data_bi:sources; prefer "
+        "FRANOPS_BI_SOURCES_KEY, so the key stays out of the process list",
+    )
+    d.add_argument(
+        "--sources-dir",
+        help="the bi/ folder of franops_sources (default: dbt_packages/franops_sources/bi "
+        "beside --dir, after `dbt deps`)",
+    )
+    d.add_argument(
+        "--no-sources",
+        action="store_true",
+        help="import the brand bi/ only, and do not ask FranOps for the source keys",
+    )
     d.set_defaults(func=cmd_deploy)
 
     c = sub.add_parser(

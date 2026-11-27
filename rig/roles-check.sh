@@ -49,7 +49,7 @@ oauth down --volumes --remove-orphans >/dev/null 2>&1 || true
 rig/rig.sh up
 
 echo "== 1. deploy with OAuth off: the roles endpoint makes the roles"
-python3 -m franops_bi deploy --dir tests/fixtures/bi --url "$URL" \
+python3 -m franops_bi deploy --dir tests/fixtures/bi --no-sources --url "$URL" \
   --username admin --password "$ADMIN_PASSWORD" | tee "$out"
 grep -q "^role HQ: +" "$out" || fail "the first deploy did not add the HQ grants"
 expect_line "the first deploy created the service account" "service account: created"
@@ -86,12 +86,12 @@ pass "the roles endpoint with a wrong key is 401"
 code="$(roles_post -H "Authorization: Bearer $GAMMA_KEY")"
 [ "$code" = "403" ] || fail "the roles endpoint with Gamma's key answered $code"
 pass "the roles endpoint with Gamma's key is 403"
-if SUPERSET_API_KEY=sst_not-a-key-0123456789 python3 -m franops_bi deploy --dir tests/fixtures/bi \
+if SUPERSET_API_KEY=sst_not-a-key-0123456789 python3 -m franops_bi deploy --dir tests/fixtures/bi --no-sources \
   --url "$URL" > "$out" 2>&1; then fail "deploy with a wrong key passed"; fi
 pass "deploy with a wrong key fails"
 
 echo "== 4. deploy under OAuth with the admin's key"
-SUPERSET_API_KEY="$ADMIN_KEY" python3 -m franops_bi deploy --dir tests/fixtures/bi --url "$URL" | tee "$out"
+SUPERSET_API_KEY="$ADMIN_KEY" python3 -m franops_bi deploy --dir tests/fixtures/bi --no-sources --url "$URL" | tee "$out"
 for role in HQ Embed GuestIssuer; do expect_line "deploy with the key: $role unchanged" "role $role: unchanged"; done
 
 echo "== 5. certify under OAuth with the admin's key"

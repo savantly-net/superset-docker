@@ -37,7 +37,7 @@ admin_login_status() {
 
 rig/rig.sh up
 FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml":"warehouse-rig-pass"}' \
-  python3 -m franops_bi deploy --dir tests/fixtures/bi --url "$URL" \
+  python3 -m franops_bi deploy --dir tests/fixtures/bi --no-sources --url "$URL" \
   --username admin --password "${RIG_ADMIN_PASSWORD:-admin-rig-pass}"
 rig/rig.sh rls-plan 2>/dev/null > "$PLAN"
 # The product's roles apply (item 69) sets Embed and GuestIssuer after the embed, so each guest token

@@ -1,0 +1,49 @@
+dashboard_title: CallRail calls
+description: null
+css: null
+slug: null
+certified_by: null
+certification_details: null
+published: true
+uuid: 7e3d4c60-9f51-4a0c-9d83-2c4e5f6a7b83
+position:
+  DASHBOARD_VERSION_KEY: v2
+  ROOT_ID:
+    type: ROOT
+    id: ROOT_ID
+    children:
+    - GRID_ID
+  GRID_ID:
+    type: GRID
+    id: GRID_ID
+    children:
+    - ROW-1
+    parents:
+    - ROOT_ID
+  ROW-1:
+    type: ROW
+    id: ROW-1
+    children:
+    - CHART-1
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    meta:
+      background: BACKGROUND_TRANSPARENT
+  CHART-1:
+    type: CHART
+    id: CHART-1
+    children: []
+    parents:
+    - ROOT_ID
+    - GRID_ID
+    - ROW-1
+    meta:
+      chartId: 909145157
+      uuid: 6d2c3b5f-8e40-4f9b-8c72-1b3d4e5f6a72
+      width: 6
+      height: 50
+      sliceName: CallRail calls per location
+theme_uuid: null
+version: 1.0.0
+tags: []

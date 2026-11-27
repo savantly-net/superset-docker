@@ -45,7 +45,7 @@ key="$(compose exec -T rig-superset cat /tmp/rig-admin-key)"
 [ -n "$key" ] || { echo "FAIL: the probe wrote no API key" >&2; exit 1; }
 printf '%s\n' "$key" >> "$secrets_file"
 FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml":"warehouse-rig-pass"}' SUPERSET_API_KEY="$key" \
-  python3 -m franops_bi deploy --dir ../tests/fixtures/bi --url "http://127.0.0.1:${RIG_SUPERSET_PORT:-18388}"
+  python3 -m franops_bi deploy --dir ../tests/fixtures/bi --no-sources --url "http://127.0.0.1:${RIG_SUPERSET_PORT:-18388}"
 echo "PASS: the org admin's key deploys"
 
 echo "== The logs hold no email, no API key, and no token"

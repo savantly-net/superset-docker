@@ -34,6 +34,12 @@ MANAGED_TYPES = ASSET_TYPES
 
 CERTIFIED = "certified"
 
+# The UUID of the warehouse database of every brand (S4.11, Jeremy 2026-11-27). Each brand's
+# `bi/databases/warehouse.yaml` carries it, and each dataset in `bi/<sourceKey>/` of
+# `franops_sources` names it as `database_uuid`. A source folder holds no database, because the
+# connection string is the brand's. An export from any brand BI then names the right database.
+WAREHOUSE_UUID = "ef85f59c-c056-4cb4-b44f-94b720da9310"
+
 # The keys that each asset type needs, from Superset's import schemas (required=True).
 REQUIRED_KEYS = {
     "databases": ("database_name", "sqlalchemy_uri", "uuid", "version"),
@@ -48,6 +54,8 @@ class Bundle:
     root: pathlib.Path
     # Relative POSIX path -> parsed YAML document, for each YAML file of the folder.
     documents: dict[str, Any] = field(default_factory=dict)
+    # Relative path -> file text, for a non-asset file that is not under `root` (`merge`).
+    texts: dict[str, str] = field(default_factory=dict)
 
     def assets(self, asset_type: str) -> dict[str, dict[str, Any]]:
         prefix = asset_type + "/"
@@ -70,8 +78,13 @@ def _asset_type(rel: str) -> str | None:
     return top if top in ASSET_TYPES and "/" in rel else None
 
 
-def load(root: str | pathlib.Path) -> Bundle:
-    """Parse each YAML file under `root`. Raise BundleError with every problem found."""
+def load(root: str | pathlib.Path, *, source: bool = False) -> Bundle:
+    """Parse each YAML file under `root`. Raise BundleError with every problem found.
+
+    `source=True` reads `bi/<sourceKey>/` of `franops_sources` (S4.11): it holds no
+    metadata.yaml and no database, and each dataset names WAREHOUSE_UUID. `merge` then joins
+    it to the brand's databases for the import.
+    """
     root = pathlib.Path(root)
     problems: list[str] = []
     bundle = Bundle(root=root)
@@ -91,7 +104,13 @@ def load(root: str | pathlib.Path) -> Bundle:
             continue
         bundle.documents[rel] = doc
 
-    if not (root / "metadata.yaml").is_file():
+    if source:
+        if bundle.assets("databases"):
+            problems.append(
+                "databases/: a source folder holds no database; its datasets name "
+                f"database_uuid {WAREHOUSE_UUID}, the brand's warehouse"
+            )
+    elif not (root / "metadata.yaml").is_file():
         problems.append("metadata.yaml: missing")
     elif "metadata.yaml" in bundle.documents:  # absent here when it did not parse
         meta = bundle.documents["metadata.yaml"]
@@ -125,7 +144,15 @@ def load(root: str | pathlib.Path) -> Bundle:
 
     # Each reference must resolve inside the folder: an import of a dangling one fails.
     for rel, doc in bundle.assets("datasets").items():
-        if isinstance(doc, dict) and str(doc.get("database_uuid")) not in by_type["databases"]:
+        if not isinstance(doc, dict):
+            continue
+        if source:
+            if str(doc.get("database_uuid")) != WAREHOUSE_UUID:
+                problems.append(
+                    f"{rel}: database_uuid {doc.get('database_uuid')} is not the warehouse "
+                    f"UUID {WAREHOUSE_UUID}"
+                )
+        elif str(doc.get("database_uuid")) not in by_type["databases"]:
             problems.append(f"{rel}: database_uuid {doc.get('database_uuid')} is not in databases/")
     for rel, doc in bundle.assets("charts").items():
         if isinstance(doc, dict) and str(doc.get("dataset_uuid")) not in by_type["datasets"]:
@@ -140,6 +167,36 @@ def load(root: str | pathlib.Path) -> Bundle:
     if problems:
         raise BundleError(problems)
     return bundle
+
+
+def merge(source: Bundle, brand: Bundle) -> Bundle:
+    """The source assets with the brand's metadata.yaml and databases, as one import (S4.11).
+
+    Superset resolves a dataset's `database_uuid` inside the ZIP only, so the warehouse
+    database travels with each source import. Raise BundleError when the brand's `bi/` has no
+    database with WAREHOUSE_UUID, or when a source asset reuses a brand UUID.
+    """
+    problems: list[str] = []
+    brand_dbs = brand.assets("databases")
+    if not any(str(d.get("uuid")) == WAREHOUSE_UUID for d in brand_dbs.values()):
+        problems.append(
+            f"{brand.root}: no database with uuid {WAREHOUSE_UUID}; the brand's "
+            "bi/databases/warehouse.yaml must carry it"
+        )
+    brand_uuids = {str(d.get("uuid")) for d in brand.documents.values() if isinstance(d, dict)}
+    for rel, doc in source.documents.items():
+        if _asset_type(rel) and isinstance(doc, dict) and str(doc.get("uuid")) in brand_uuids:
+            problems.append(f"{source.root}/{rel}: uuid {doc.get('uuid')} is also in {brand.root}")
+    if problems:
+        raise BundleError(problems)
+    merged = Bundle(root=source.root)
+    merged.documents["metadata.yaml"] = brand.documents["metadata.yaml"]
+    merged.documents.update(brand_dbs)
+    merged.documents.update(
+        {rel: doc for rel, doc in source.documents.items() if rel != "metadata.yaml"}
+    )
+    merged.texts["metadata.yaml"] = (brand.root / "metadata.yaml").read_text(encoding="utf-8")
+    return merged
 
 
 def _dashboard_chart_uuids(doc: dict[str, Any]) -> list[str]:
@@ -179,7 +236,8 @@ def rewrite(bundle: Bundle) -> dict[str, str]:
             out[rel] = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True)
         else:
             # metadata.yaml and tags.yaml go through unchanged.
-            out[rel] = (bundle.root / rel).read_text(encoding="utf-8")
+            text = bundle.texts.get(rel)
+            out[rel] = text if text is not None else (bundle.root / rel).read_text(encoding="utf-8")
     return out
 
 

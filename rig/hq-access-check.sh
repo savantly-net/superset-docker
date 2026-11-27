@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 deploy() {
   FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml":"warehouse-rig-pass"}' \
-    python3 -m franops_bi deploy --dir tests/fixtures/bi --url "$URL" \
+    python3 -m franops_bi deploy --dir tests/fixtures/bi --no-sources --url "$URL" \
     --username admin --password "${RIG_ADMIN_PASSWORD:-admin-rig-pass}"
 }
 

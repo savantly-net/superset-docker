@@ -121,7 +121,7 @@ def warehouse_tables(client: Superset) -> list[str]:
 
 def deploy(*extra: str) -> int:
     os.environ["FRANOPS_BI_DB_PASSWORDS"] = json.dumps(DB_PASSWORDS)
-    return main(["deploy", "--dir", str(FIXTURE), "--url", URL,
+    return main(["deploy", "--dir", str(FIXTURE), "--no-sources", "--url", URL,
                  "--username", "admin", "--password", ADMIN_PASSWORD, *extra])
 
 
@@ -248,7 +248,7 @@ def test_control_a_changed_yaml_does_update_the_asset(tmp_path: pathlib.Path) ->
     chart.write_text(yaml.safe_dump(doc, sort_keys=False))
     before = rows("charts")
     os.environ["FRANOPS_BI_DB_PASSWORDS"] = json.dumps(DB_PASSWORDS)
-    assert main(["deploy", "--dir", str(copy), "--url", URL,
+    assert main(["deploy", "--dir", str(copy), "--no-sources", "--url", URL,
                  "--username", "admin", "--password", ADMIN_PASSWORD]) == 0
     after = rows("charts")
     name = sql("SELECT slice_name FROM slices")[0][0]
