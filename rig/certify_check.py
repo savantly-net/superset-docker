@@ -222,7 +222,7 @@ def main():
     files = {"chart": next(repo.glob("bi/charts/HQ_draft_on_a_certified_dataset_*.yaml")),
              "dashboard": next(repo.glob("bi/dashboards/HQ_draft_dashboard_*.yaml"))}
     before = hook_tag_lines()
-    code, out = franops_bi("deploy", "--dir", str(repo / "bi"))
+    code, out = franops_bi("deploy", "--dir", str(repo / "bi"), "--no-sources")
     check("S7.5 AC2: franops-bi deploy imports the branch's bi/", code == 0, out.splitlines()[-1:])
     check("S7.5 AC2: the hook tags no asset during the deploy", hook_tag_lines() == before,
           [before, hook_tag_lines()])

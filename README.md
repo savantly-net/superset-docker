@@ -248,9 +248,21 @@ rig by `rig/make_fixture.py`.
 pip install -e tools/franops_bi
 franops-bi validate --dir bi/
 SUPERSET_API_KEY=sst_... franops-bi certify chart 42 --repo ../brand --url https://bi.example.com
-SUPERSET_API_KEY=sst_... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
-  franops-bi deploy --dir bi/ --url https://bi.example.com
+dbt deps   # in the brand repository: dbt_packages/franops_sources/ at the pinned version
+SUPERSET_API_KEY=sst_... FRANOPS_BI_SOURCES_KEY=fran_... \
+  FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "..."}' \
+  franops-bi deploy --dir bi/ --url https://bi.example.com --franops-url https://franops.io
 ```
+
+- **Sources (S4.11).** `deploy` first asks FranOps for the organization's source keys
+  (`GET /api/data/bi/sources`, with a FranOps API key whose only scope is `data_bi:sources`). For each key
+  it imports `bi/<sourceKey>/` of `franops_sources`, read from `dbt_packages/franops_sources/bi/` beside
+  `--dir` (`--sources-dir` overrides it), then the brand `bi/`. A key with no folder imports nothing. A
+  source folder holds no database: each of its datasets names `database_uuid`
+  `ef85f59c-c056-4cb4-b44f-94b720da9310`, and the brand's `bi/databases/warehouse.yaml` must carry that
+  UUID. `deploy` imports each source folder with the brand's `databases/` in one ZIP, because Superset
+  resolves a `database_uuid` inside the ZIP only. `--no-sources` imports the brand `bi/` only; without it
+  and without `--franops-url`, `deploy` stops.
 
 - **Credentials.** Under OAuth the `db` login accepts the service account only, so `deploy` and `certify`
   send the API key of an Admin (`SUPERSET_API_KEY`, S5.10). `BI_API_KEYS=true` turns API keys on; a user
@@ -267,6 +279,8 @@ SUPERSET_API_KEY=sst_... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "
   roles). After each import, `deploy` calls `POST /api/v1/franops/roles/apply/` (Admin only), so a newly
   certified dataset gets its grants at once (`--no-apply-roles` skips it).
 
+- `validate --source` checks `bi/<sourceKey>/` of `franops_sources`: no database, and each dataset names the
+  warehouse UUID (S4.11).
 - `validate` parses each YAML and exits 1 on a defect: a file that does not parse, a bad `metadata.yaml`,
   a missing required key, a duplicate `uuid`, a reference to an asset that is not in the folder, or `tags`
   on a database or a dataset.

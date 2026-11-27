@@ -40,3 +40,15 @@ CREATE TABLE raw_callrail.calls (
 INSERT INTO raw_callrail.calls VALUES
   ('CAL1', 'loc-001', '+15550000001'),
   ('CAL2', 'loc-002', '+15550000002');
+
+-- The source fixture of the S4.11 rig tests: tests/fixtures/sources/bi/callrail/ reads it. A
+-- schema of its own, because the S5.5 rig tests assert that marts holds calls_daily only.
+CREATE SCHEMA source_fixture;
+CREATE TABLE source_fixture.callrail_calls (
+  location_key text NOT NULL,
+  day          date NOT NULL,
+  calls        integer NOT NULL
+);
+INSERT INTO source_fixture.callrail_calls VALUES
+  ('loc-001', '2026-11-01', 4),
+  ('loc-002', '2026-11-01', 3);

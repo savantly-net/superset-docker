@@ -16,3 +16,6 @@ trap cleanup EXIT
 
 rig/rig.sh up
 FRANOPS_BI_RIG=1 python -m pytest -m rig -s -rxX tools/franops_bi/tests/test_rig.py
+# S4.11 needs an empty BI of its own.
+rig/rig.sh up
+FRANOPS_BI_RIG=1 python -m pytest -m rig -s -rxX tools/franops_bi/tests/test_rig_sources.py
