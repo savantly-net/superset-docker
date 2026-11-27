@@ -70,6 +70,8 @@ def apply_roles_remote(client: Superset) -> int:
                for n, r in (body.get("roles") or {}).items()],
         service_account=str(body.get("serviceAccount")),
         datasets=int(body.get("datasets", 0)),
+        scorecard=int(body.get("scorecardDatasets", 0)),
+        uncertified=[str(x) for x in body.get("uncertifiedEmbedded") or []],
     )
     for line in result.lines():
         print(line)

@@ -6,26 +6,52 @@ import pytest
 
 from franops_bi import cli
 from franops_bi.client import Superset
-from franops_bi.roles import BASE_GRANTS, FORBIDDEN, desired, diff, role_names
+from franops_bi.roles import (BASE_GRANTS, FORBIDDEN, Result, RoleChange, RolesError, desired, diff,
+                               role_names, split_embedded)
+
+A, B = "[warehouse].[a](id:1)", "[warehouse].[b](id:2)"
 
 
 def test_each_role_gets_exactly_the_design_table() -> None:
-    wanted = desired(["[warehouse].[a](id:1)", "[warehouse].[b](id:2)"])
-    access = {("datasource_access", "[warehouse].[a](id:1)"), ("datasource_access", "[warehouse].[b](id:2)")}
+    wanted = desired([A, B], [A])
     assert wanted["HQ"] == {
         ("can_read", "Chart"), ("can_write", "Chart"), ("can_read", "Dashboard"),
         ("can_write", "Dashboard"), ("can_read", "Tag"), ("can_list", "Tags"),
-    } | access
-    assert wanted["Embed"] == {("can_read", "Dashboard"), ("can_read", "Chart")} | access
-    assert wanted["GuestIssuer"] == {("can_grant_guest_token", "SecurityRestApi")} | access
+    } | {("datasource_access", A), ("datasource_access", B)}
+    assert wanted["Embed"] == {("can_read", "Dashboard"), ("can_read", "Chart"), ("datasource_access", A)}
+    assert wanted["GuestIssuer"] == {("can_grant_guest_token", "SecurityRestApi"), ("datasource_access", A)}
+
+
+def test_no_embedded_dashboard_gives_the_guest_roles_no_dataset() -> None:
+    wanted = desired([A, B], [])
+    assert wanted["Embed"] == set(BASE_GRANTS["Embed"])
+    assert wanted["GuestIssuer"] == set(BASE_GRANTS["GuestIssuer"])
+    assert ("datasource_access", A) in wanted["HQ"]
 
 
 def test_no_certified_dataset_gives_the_fixed_grants_only() -> None:
-    assert desired([]) == {k: set(v) for k, v in BASE_GRANTS.items()}
+    assert desired([], []) == {k: set(v) for k, v in BASE_GRANTS.items()}
+
+
+def test_a_scorecard_dataset_that_is_not_certified_is_refused() -> None:
+    with pytest.raises(RolesError, match="not certified"):
+        desired([A], [B])
+
+
+def test_split_embedded_keeps_certified_and_names_the_rest() -> None:
+    assert split_embedded([1, 2], [2, 3]) == ({2}, {3})
+    assert split_embedded([1], []) == (set(), set())
+
+
+def test_the_result_names_an_uncertified_embedded_dataset() -> None:
+    result = Result([RoleChange("Embed")], "unchanged", datasets=2, scorecard=1, uncertified=["raw (id 3)"])
+    assert result.lines()[0] == "roles: 2 certified datasets, 1 on embedded dashboards"
+    assert "raw (id 3)" in result.lines()[1]
+    assert result.as_dict()["uncertifiedEmbedded"] == ["raw (id 3)"]
 
 
 def test_no_role_holds_a_forbidden_permission() -> None:
-    for grants in desired(["[w].[t](id:9)"]).values():
+    for grants in desired(["[w].[t](id:9)"], ["[w].[t](id:9)"]).values():
         assert not {p for p, _ in grants} & FORBIDDEN
 
 

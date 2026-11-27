@@ -194,7 +194,10 @@ class LoginRefused(Exception):
 
 # The BI role that the FranOps `userinfo` endpoint returns, mapped to the Superset role key.
 # AUTH_ROLES_MAPPING maps the key to the Superset role. Each other value refuses the login.
-FRANOPS_BI_ROLES = {"HQ": "HQ"}
+# `ADMIN` (the FranOps org admin) gets Admin on the web login, so that a person can make the first
+# API key in BI under OAuth (S5.10, item 68). MCP accepts `HQ` only (S7.1).
+FRANOPS_BI_ROLES = {"HQ": "HQ", "ADMIN": "ADMIN"}
+MCP_ROLE_KEY = "HQ"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -420,7 +423,7 @@ if enable_oauth:
     # login from the FranOps answer (`role_keys`). These are fixed under OAuth: the env value
     # of AUTH_USER_REGISTRATION is a string, and "false" would be truthy.
     AUTH_USER_REGISTRATION = True
-    AUTH_ROLES_MAPPING = {"HQ": ["HQ"]}
+    AUTH_ROLES_MAPPING = {"HQ": ["HQ"], "ADMIN": ["Admin"]}
     AUTH_ROLES_SYNC_AT_LOGIN = True
     # FAB adds the registration role to each OAuth user. `Public` holds no permission (the
     # lockdown check reads it), so the registration role grants nothing.
@@ -570,6 +573,10 @@ def mcp_user_resolver(app, access_token) -> str:
 
     try:
         userinfo = oidc_user_info(claims, franops_bi_role(sub))
+        if userinfo["role_keys"] != [MCP_ROLE_KEY]:
+            # An org admin is Admin on the web. Over MCP, Admin would reach raw tables (S7.1),
+            # and an HQ sync here would take Admin off the same user row (item 68).
+            raise LoginRefused(f"MCP is for {MCP_ROLE_KEY} only, not {userinfo['role_keys'][0]}")
         refuse_taken_email(sm, userinfo)
         hq = sm.find_role(FRANOPS_BI_ROLES["HQ"])
         if hq is None:

@@ -93,7 +93,8 @@ RIG_SKIP_BUILD=1 rig/roles-check.sh
   is made for them. `POST /login/` with
   the admin password makes no session, the admin API login gets `401`, and the service account still gets
   a token (S5.8). The check then searches the `rig-superset` log for each test email, the API key, and each
-  token that the fake provider issued, and fails on a hit. `COMPOSE_PROJECT_NAME`, `RIG_SUPERSET_PORT`, and
+  token that the fake provider issued, and fails on a hit. An org admin (`ADMIN`) signs in with `Admin`,
+  makes an API key with the session, and the check runs `franops-bi deploy` with that key (item 68). `COMPOSE_PROJECT_NAME`, `RIG_SUPERSET_PORT`, and
   `RIG_META_PORT` move the rig beside another one.
 
 ## Base image watch
@@ -203,8 +204,9 @@ provider. It needs:
 At each login the image reads the claims of the ID token that Authlib verified (or the provider's
 userinfo when there is no ID token). It needs `sub`, and uses `email`, `given_name`, `family_name`, and
 `name` when present. The username is `oidc:<sub>`. The image then calls
-`GET {FRANOPS_URL}/api/data/bi/userinfo?sub=<sub>` with the key. `biRole: "HQ"` gives the `HQ` role
-(`AUTH_ROLES_MAPPING`, set again at each login). `NONE`, an answer other than `200`, no answer in time, or
+`GET {FRANOPS_URL}/api/data/bi/userinfo?sub=<sub>` with the key. `biRole: "HQ"` gives the `HQ` role, and
+`biRole: "ADMIN"` (the FranOps org admin) gives `Admin` (`AUTH_ROLES_MAPPING`, set again at each login).
+The org admin makes the first API key in BI (item 68). MCP refuses `ADMIN` and accepts `HQ` only. `NONE`, an answer other than `200`, no answer in time, or
 no FranOps configuration refuses the login. The log line of a login holds the provider, the `sub`, and
 the reason, never an email, a token, or the key. FAB also gives each OAuth user the registration role
 `Public`, which holds no permission. The `HQ` role must exist; `superset init` does not make it.
@@ -254,7 +256,10 @@ SUPERSET_API_KEY=sst_... FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml": "
   makes and revokes a key in BI, and only Admin holds `ApiKey`. MCP keeps API keys off. With OAuth off,
   `--username` and `SUPERSET_PASSWORD` log in with the `db` provider instead.
 - **Roles (S5.9).** `franops-bi roles apply` sets `HQ`, `Embed`, and `GuestIssuer` to exactly the role
-  table of `design/bi-image.md`, with `datasource_access` on each `certified` dataset, and gives the
+  table of `design/bi-image.md`. `HQ` gets `datasource_access` on each `certified` dataset; `Embed` and
+  `GuestIssuer` get the certified datasets of the dashboards with an embedded config only (item 69), and
+  the output names a dataset of an embedded dashboard that is not certified. After you turn on embedding
+  for a dashboard, run `deploy` or the init task, or BI refuses its guest tokens. It gives the
   service account `BI_SERVICE_USERNAME` the role `GuestIssuer` alone (`BI_SERVICE_PASSWORD` sets its
   password; with none, a missing account is not created). It runs in process, in the image. Run
   `/app/franops-init.sh` as the one-off init task (`superset db upgrade`, `superset init`, then the

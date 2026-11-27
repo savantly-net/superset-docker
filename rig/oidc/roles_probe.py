@@ -2,6 +2,8 @@
 
 Run by rig/roles-check.sh. Prints one PASS or FAIL line, and a JSON line with the admin's API
 key when ROLES_PROBE_MAKE_KEY=1 (the rig's key; it lives as long as the rig).
+ROLES_PROBE_EMBED=1 first gives each dashboard an embedded config, as an Admin does in BI.
+ROLES_PROBE_SCORECARD=<n> checks that n datasets are on embedded dashboards (item 69).
 """
 import json
 import os
@@ -22,18 +24,33 @@ def check(name, ok, detail=""):
 with app.app_context():
     from superset import db, security_manager as sm
     from superset.connectors.sqla.models import SqlaTable
+    from superset.models.dashboard import Dashboard
+    from superset.models.embedded_dashboard import EmbeddedDashboard
     from superset.tags.models import ObjectType, Tag, TaggedObject
 
-    from franops_bi.roles import BASE_GRANTS
+    from franops_bi.roles import BASE_GRANTS, SCORECARD_KEYS
+
+    if os.environ.get("ROLES_PROBE_EMBED") == "1":
+        for dash in db.session.query(Dashboard).all():
+            if not dash.embedded:
+                db.session.add(EmbeddedDashboard(dashboard_id=dash.id))
+        db.session.commit()
 
     ids = [r.object_id for r in db.session.query(TaggedObject).join(Tag, Tag.id == TaggedObject.tag_id)
            .filter(Tag.name == "certified", TaggedObject.object_type == ObjectType.dataset)]
-    perms = {ds.get_perm() for ds in db.session.query(SqlaTable).filter(SqlaTable.id.in_(ids))}
+    certified = {ds.id: ds.get_perm() for ds in db.session.query(SqlaTable).filter(SqlaTable.id.in_(ids))}
+    perms = set(certified.values())
     check("the deploy certified datasets", perms, ids)
+    embedded = {slc.datasource_id for emb in db.session.query(EmbeddedDashboard).all()
+                for slc in emb.dashboard.slices}
+    scorecard = {perm for ds_id, perm in certified.items() if ds_id in embedded}
+    if "ROLES_PROBE_SCORECARD" in os.environ:
+        check("the scorecard datasets (certified, on an embedded dashboard)",
+              len(scorecard) == int(os.environ["ROLES_PROBE_SCORECARD"]), sorted(scorecard))
     for name, base in BASE_GRANTS.items():
         role = sm.find_role(name)
         have = set() if role is None else {(p.permission.name, p.view_menu.name) for p in role.permissions}
-        want = set(base) | {("datasource_access", p) for p in perms}
+        want = set(base) | {("datasource_access", p) for p in (scorecard if name in SCORECARD_KEYS else perms)}
         check(f"role {name} is exactly the design table", have == want,
               {"extra": sorted(have - want), "missing": sorted(want - have)})
     user = sm.find_user(username=os.environ.get("BI_SERVICE_USERNAME", "franops_guest_issuer"))

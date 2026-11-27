@@ -25,4 +25,8 @@ USERS = {
     "hq_email_taken": {"sub": "user_rigET0007", "email": "admin@rig.invalid", "biRole": "HQ"},
     # The S5.3 MCP check: HQ at the first MCP call, then FranOps answers NONE for this user.
     "mcp_demoted": {"sub": "user_rigMD0008", "email": "demoted.hq@rig-oidc.invalid", "biRole": "HQ"},
+    # An org admin: FranOps answers ADMIN. The web login gives Admin, and the user makes the first
+    # API key in BI (S5.10, item 68). MCP refuses this user (S7.1).
+    "org_admin": {"sub": "user_rigOA0009", "email": "org.admin@rig-oidc.invalid", "name": "Olga Admin",
+                  "given_name": "Olga", "family_name": "Admin", "biRole": "ADMIN"},
 }

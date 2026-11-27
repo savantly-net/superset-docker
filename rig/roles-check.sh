@@ -9,8 +9,10 @@
 # 1. An empty rig, OAuth off. franops-bi deploys tests/fixtures/bi with the admin login; the
 #    deploy calls the roles endpoint, which creates the roles and the service account.
 # 2. /app/franops-init.sh, the init task: it changes nothing. rig/oidc/roles_probe.py: each role
-#    is exactly the design table, and only Admin holds FranopsRoles and ApiKey. The probe makes
-#    an API key for the admin and for a Gamma user.
+#    is exactly the design table, and only Admin holds FranopsRoles and ApiKey. With no embedded
+#    dashboard, Embed and GuestIssuer get no dataset (item 69). The probe then embeds the fixture
+#    dashboard, the init task gives its dataset to Embed and GuestIssuer, and the probe makes an
+#    API key for the admin and for a Gamma user.
 # 3. rig-superset restarts in OAuth mode on the same metadata database. The admin's `db` login
 #    is refused (S5.8). The roles endpoint refuses no credentials, a wrong key, and Gamma's key.
 # 4. franops-bi deploy with the admin's key: the import, the tags, and the roles call pass.
@@ -56,7 +58,15 @@ echo "== 2. the init task changes nothing; each role is the design table"
 base exec -T rig-superset /app/franops-init.sh > "$out" 2>&1 || fail "franops-init.sh failed"
 for role in HQ Embed GuestIssuer; do expect_line "init: $role unchanged" "role $role: unchanged"; done
 expect_line "init: the service account unchanged" "service account: unchanged"
-keys="$(base exec -T -e ROLES_PROBE_MAKE_KEY=1 rig-superset python - < rig/oidc/roles_probe.py | tee /dev/stderr | sed -n 's/^RIGJSON //p')"
+expect_line "init: no embedded dashboard yet" "roles: 1 certified datasets, 0 on embedded dashboards"
+base exec -T -e ROLES_PROBE_SCORECARD=0 rig-superset python - < rig/oidc/roles_probe.py \
+  || fail "the roles probe failed with no embedded dashboard"
+base exec -T -e ROLES_PROBE_EMBED=1 rig-superset python - < rig/oidc/roles_probe.py > /dev/null 2>&1 || true
+base exec -T rig-superset /app/franops-init.sh > "$out" 2>&1 || fail "franops-init.sh failed after the embed"
+expect_line "init after the embed: the dataset is a scorecard dataset" "roles: 1 certified datasets, 1 on embedded dashboards"
+for role in Embed GuestIssuer; do expect_line "init after the embed: $role gets it" "role $role: +1 -0"; done
+expect_line "init after the embed: HQ unchanged" "role HQ: unchanged"
+keys="$(base exec -T -e ROLES_PROBE_MAKE_KEY=1 -e ROLES_PROBE_SCORECARD=1 rig-superset python - < rig/oidc/roles_probe.py | tee /dev/stderr | sed -n 's/^RIGJSON //p')"
 [ -n "$keys" ] || fail "the roles probe failed"
 ADMIN_KEY="$(printf '%s' "$keys" | python3 -c 'import json,sys; print(json.load(sys.stdin)["admin"])')"
 GAMMA_KEY="$(printf '%s' "$keys" | python3 -c 'import json,sys; print(json.load(sys.stdin)["gamma"])')"

@@ -9,9 +9,12 @@ changes nothing. It runs in process, inside the BI image, in two places:
 - `POST /api/v1/franops/roles/apply/` (config/franops_api.py), which `franops-bi deploy` calls
   after each import, so that a newly certified dataset gets its grants at once.
 
-The dataset grants are `datasource_access` on each dataset tagged `certified`. The design gives
-`Embed` and `GuestIssuer` the datasets of the scorecard dashboards. BI has no scorecard mark, so
-each certified dataset stands for them: a scorecard dataset is certified (S12.1).
+The dataset grants are `datasource_access`. `HQ` gets each dataset tagged `certified`. `Embed` and
+`GuestIssuer` get the scorecard datasets only (item 69): each certified dataset of a chart on a
+dashboard with an embedded config. BI has no scorecard mark, and an embedded dashboard is the one a
+guest token can open. A dataset of an embedded dashboard that is not certified gets no grant, and
+the result names it. An Admin who turns on embedding for a dashboard runs `franops-bi deploy` (or
+the init task) after it; until then a guest token for that dashboard is refused.
 
 This module imports Superset inside the functions only, so the CLI loads without Superset.
 """
@@ -38,6 +41,9 @@ BASE_GRANTS: dict[str, tuple[tuple[str, str], ...]] = {
     "Embed": (("can_read", "Dashboard"), ("can_read", "Chart")),
     "GuestIssuer": (("can_grant_guest_token", "SecurityRestApi"),),
 }
+
+# The role keys that get the scorecard datasets. HQ gets each certified dataset.
+SCORECARD_KEYS = frozenset({"Embed", "GuestIssuer"})
 
 # A role of this module never holds one of these (design/bi-image.md: HQ gets no SQL Lab and no
 # database, schema, or all-datasource access). apply() fails before it commits such a role.
@@ -67,6 +73,8 @@ class Result:
     roles: list[RoleChange]
     service_account: str  # "created", "updated", "unchanged", or "skipped: <reason>"
     datasets: int
+    scorecard: int = 0
+    uncertified: list[str] = field(default_factory=list)  # embedded datasets with no grant
 
     @property
     def changed(self) -> bool:
@@ -75,13 +83,17 @@ class Result:
     def as_dict(self) -> dict:
         return {
             "datasets": self.datasets,
+            "scorecardDatasets": self.scorecard,
+            "uncertifiedEmbedded": self.uncertified,
             "serviceAccount": self.service_account,
             "roles": {r.name: {"added": r.added, "removed": r.removed} for r in self.roles},
             "changed": self.changed,
         }
 
     def lines(self) -> list[str]:
-        out = [f"roles: {self.datasets} certified datasets"]
+        out = [f"roles: {self.datasets} certified datasets, {self.scorecard} on embedded dashboards"]
+        if self.uncertified:
+            out.append(f"roles: not certified, no grant for Embed or GuestIssuer: {', '.join(self.uncertified)}")
         for r in self.roles:
             if r.changed:
                 out.append(f"role {r.name}: +{len(r.added)} -{len(r.removed)}")
@@ -100,10 +112,27 @@ def role_names(config: dict) -> dict[str, str]:
     }
 
 
-def desired(dataset_perms: Iterable[str]) -> dict[str, set[tuple[str, str]]]:
-    """The exact permission set of each role key, for the certified datasets' perm strings."""
-    access = {("datasource_access", perm) for perm in dataset_perms}
-    return {key: set(grants) | access for key, grants in BASE_GRANTS.items()}
+def desired(certified_perms: Iterable[str], scorecard_perms: Iterable[str]) -> dict[str, set[tuple[str, str]]]:
+    """The exact permission set of each role key.
+
+    `certified_perms` are the perm strings of the certified datasets (HQ). `scorecard_perms` are
+    those of the scorecard datasets (Embed, GuestIssuer); each must also be certified.
+    """
+    certified = set(certified_perms)
+    scorecard = set(scorecard_perms)
+    if not scorecard <= certified:
+        raise RolesError(f"a scorecard dataset is not certified: {sorted(scorecard - certified)}")
+    out = {}
+    for key, grants in BASE_GRANTS.items():
+        perms = scorecard if key in SCORECARD_KEYS else certified
+        out[key] = set(grants) | {("datasource_access", perm) for perm in perms}
+    return out
+
+
+def split_embedded(certified_ids: Iterable[int], embedded_ids: Iterable[int]) -> tuple[set[int], set[int]]:
+    """The dataset ids of the embedded dashboards, split into (certified, not certified)."""
+    certified, embedded = set(certified_ids), set(embedded_ids)
+    return embedded & certified, embedded - certified
 
 
 def diff(name: str, current: set[tuple[str, str]], wanted: set[tuple[str, str]]) -> RoleChange:
@@ -122,6 +151,7 @@ def apply(service_password: str | None = None) -> Result:
     from flask import current_app
     from superset import db, security_manager as sm
     from superset.connectors.sqla.models import SqlaTable
+    from superset.models.embedded_dashboard import EmbeddedDashboard
     from superset.tags.models import ObjectType, Tag, TaggedObject
 
     config = current_app.config
@@ -135,7 +165,20 @@ def apply(service_password: str | None = None) -> Result:
             .all()
         ]
         datasets = db.session.query(SqlaTable).filter(SqlaTable.id.in_(ids)).all() if ids else []
-        wanted = desired(ds.get_perm() for ds in datasets)
+        embedded_ids = {
+            slc.datasource_id
+            for emb in db.session.query(EmbeddedDashboard).all()
+            if emb.dashboard is not None
+            for slc in emb.dashboard.slices
+            if slc.datasource_type == "table" and slc.datasource_id is not None
+        }
+        scorecard_ids, uncertified_ids = split_embedded((ds.id for ds in datasets), embedded_ids)
+        uncertified = []
+        if uncertified_ids:
+            rows = db.session.query(SqlaTable).filter(SqlaTable.id.in_(uncertified_ids)).all()
+            uncertified = sorted(f"{ds.table_name} (id {ds.id})" for ds in rows)
+        wanted = desired((ds.get_perm() for ds in datasets),
+                         (ds.get_perm() for ds in datasets if ds.id in scorecard_ids))
 
         def pv(perm: str, view: str):
             if perm == "datasource_access":
@@ -190,7 +233,8 @@ def apply(service_password: str | None = None) -> Result:
     except Exception:
         db.session.rollback()
         raise
-    return Result(roles=changes, service_account=account, datasets=len(datasets))
+    return Result(roles=changes, service_account=account, datasets=len(datasets),
+                  scorecard=len(scorecard_ids), uncertified=uncertified)
 
 
 def service_password_from_env(env_name: str = "BI_SERVICE_PASSWORD") -> str | None:

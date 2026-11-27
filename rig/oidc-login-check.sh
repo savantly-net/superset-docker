@@ -11,6 +11,8 @@
 # 2. rig/oidc/login_probe.py, inside rig-superset: an HQ user signs in and gets HQ; a franchisee
 #    and a user whom FranOps cannot answer are refused, and no user is made for them; the
 #    database login form gives no session; the service account still gets an API token (S5.8).
+#    An org admin (FranOps ADMIN) signs in with Admin and makes an API key in BI (item 68).
+# 2a. franops-bi deploy, from the host, with that key: the first key under OAuth deploys (S5.10).
 # 3. The logs of rig-superset hold no test email, no API key, and no token that the fake
 #    provider issued.
 set -euo pipefail
@@ -38,6 +40,14 @@ echo "== OIDC login probe"
 # Not `python -I`: the probe loads the server's configuration, and -I drops PYTHONPATH.
 compose exec -T -w /rig-oidc rig-superset python /rig-oidc/login_probe.py
 
+echo "== franops-bi deploy with the org admin's key (S5.10, item 68)"
+key="$(compose exec -T rig-superset cat /tmp/rig-admin-key)"
+[ -n "$key" ] || { echo "FAIL: the probe wrote no API key" >&2; exit 1; }
+printf '%s\n' "$key" >> "$secrets_file"
+FRANOPS_BI_DB_PASSWORDS='{"databases/warehouse.yaml":"warehouse-rig-pass"}' SUPERSET_API_KEY="$key" \
+  python3 -m franops_bi deploy --dir ../tests/fixtures/bi --url "http://127.0.0.1:${RIG_SUPERSET_PORT:-18388}"
+echo "PASS: the org admin's key deploys"
+
 echo "== The logs hold no email, no API key, and no token"
 compose exec -T -w /rig-oidc rig-superset python -c '
 import json, urllib.request
@@ -49,7 +59,7 @@ for user in USERS.values():
 print("fran_rig-bi-userinfo-key")
 for token in json.load(urllib.request.urlopen("http://rig-fake-oidc:8080/_issued", timeout=10))["tokens"]:
     print(token)
-' > "$secrets_file"
+' >> "$secrets_file"
 count="$(wc -l < "$secrets_file" | tr -d ' ')"
 if [ "$count" -lt 6 ]; then
   echo "FAIL: only $count secrets to look for; the probe issued too few tokens" >&2

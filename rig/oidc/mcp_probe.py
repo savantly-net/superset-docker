@@ -257,6 +257,11 @@ def main():
         status, ok, _ = call("list_dashboards", mint("franops_down"))
         check("FranOps 502: the call fails, and no user", not ok and user_of("franops_down") is None, status)
 
+        # 5a. An org admin (FranOps ADMIN) is refused: MCP is for HQ only (S7.1, item 68).
+        status, ok, text = call("list_dashboards", mint("org_admin"))
+        check("ADMIN: the token passes, and the call fails", status == 200 and not ok, f"{status} {text[:70]}")
+        check("ADMIN: no user oidc:<sub>", user_of("org_admin") is None, None)
+
         # 6. Demotion: HQ at the first call, then NONE.
         token = mint("mcp_demoted")
         _, ok_first, _ = call("list_dashboards", token)
