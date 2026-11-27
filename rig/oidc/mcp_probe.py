@@ -18,6 +18,7 @@ for each check, and exits 0 when each check passes.
 | a franchisee token (FranOps: NONE) | the call fails; no user `oidc:<sub>` |
 | an HQ token while FranOps answers 502 | the call fails |
 | HQ, then FranOps answers NONE | the call fails after MCP_ROLE_CACHE_SECONDS |
+| HQ, then a web login makes the row Admin | the next call fails, inside MCP_ROLE_CACHE_SECONDS |
 | a client registration request, the OAuth metadata documents | 4xx |
 """
 
@@ -270,6 +271,22 @@ def main():
         _, ok_after, text = call("list_dashboards", token)
         check("demoted: HQ runs, and after the cache the same valid token fails",
               ok_first and not ok_after, f"first {ok_first}, after {ok_after}: {text[:60]}")
+
+        # 6a. Promotion inside the cache window: HQ at the first call, then a web login syncs the
+        # row to Admin. The next call, still inside MCP_ROLE_CACHE_SECONDS, must not run as Admin.
+        token = mint("hq")
+        _, ok_first, _ = call("list_dashboards", token)
+        user = user_of("hq")
+        admin = sm.find_role("Admin")
+        if user is not None and admin is not None:
+            user.roles = [admin]
+            db.session.commit()
+        set_franops_role("hq", "ADMIN")
+        _, ok_after, text = call("list_dashboards", token)
+        check("promoted inside the cache window: HQ runs, then the call fails at once",
+              ok_first and admin is not None and not ok_after,
+              f"first {ok_first}, after {ok_after}: {text[:60]}")
+        set_franops_role("hq", "HQ")
 
         # 7. Dynamic client registration is off (NFR-6).
         for path, method, body in (("/register", "POST", {"redirect_uris": ["http://127.0.0.1/cb"]}),

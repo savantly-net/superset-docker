@@ -564,12 +564,19 @@ def mcp_user_resolver(app, access_token) -> str:
 
     import time
 
-    if _mcp_hq_until.get(sub, 0.0) > time.monotonic():
-        return username
-    _mcp_hq_until.pop(sub, None)
-
     from superset import security_manager as sm
     from superset.extensions import db
+
+    if _mcp_hq_until.get(sub, 0.0) > time.monotonic():
+        # The cache skips the FranOps call, never the stored roles. A web login in the cache
+        # window can sync the same user row to Admin (item 68), and Superset runs the call with
+        # the stored roles. Keep the cached path only while the row holds HQ and no other role.
+        cached = sm.find_user(username=username)
+        names = {r.name for r in cached.roles} if cached is not None else set()
+        if FRANOPS_BI_ROLES["HQ"] in names and names <= {FRANOPS_BI_ROLES["HQ"], AUTH_USER_REGISTRATION_ROLE}:
+            return username
+        logger.info("mcp cache dropped: sub=%s: the stored roles are not HQ only", sub)
+    _mcp_hq_until.pop(sub, None)
 
     try:
         userinfo = oidc_user_info(claims, franops_bi_role(sub))
