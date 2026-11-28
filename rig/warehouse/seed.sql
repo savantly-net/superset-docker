@@ -14,7 +14,7 @@ INSERT INTO marts.calls_daily VALUES
 -- The scorecard fixture of the guest-token rig tests (fran-ops S6.2). The location keys are
 -- cuids, because the FranOps broker refuses any other key. Franchisee A has 3 rows on 2
 -- locations, B has 2 rows on 2 locations. The fran-ops rig test creates locations with these IDs.
--- A schema of its own: the S5.5 rig tests assert that marts holds calls_daily only.
+-- A schema of its own: the S5.5 rig tests assert the tables of marts.
 CREATE SCHEMA embed;
 CREATE TABLE embed.scorecard_fixture (
   franchisee_label text NOT NULL,
@@ -42,7 +42,7 @@ INSERT INTO raw_callrail.calls VALUES
   ('CAL2', 'loc-002', '+15550000002');
 
 -- The source fixture of the S4.11 rig tests: tests/fixtures/sources/bi/callrail/ reads it. A
--- schema of its own, because the S5.5 rig tests assert that marts holds calls_daily only.
+-- schema of its own, because the S5.5 rig tests assert the tables of marts.
 CREATE SCHEMA source_fixture;
 CREATE TABLE source_fixture.callrail_calls (
   location_key text NOT NULL,
@@ -52,3 +52,27 @@ CREATE TABLE source_fixture.callrail_calls (
 INSERT INTO source_fixture.callrail_calls VALUES
   ('loc-001', '2026-11-01', 4),
   ('loc-002', '2026-11-01', 3);
+
+-- The real CallRail mart of franops_sources (fran-ops S12.4), with the columns and types that
+-- dbt builds (franops-data-dbt sources/models/shared/fct_calls_location_day.sql). The certified
+-- scorecard in franops-data-dbt sources/bi/callrail/ reads it. Franchisee A owns the crigloca
+-- locations, B the criglocb ones (cuids, as the broker requires). The last row is a call that
+-- only a franchisee rule maps: its location_key is null, so no guest token clause matches it.
+CREATE TABLE marts.fct_calls_location_day (
+  location_key     text,
+  franchisee_key   text,
+  date             date,
+  calls            bigint,
+  answered         bigint,
+  answerable       bigint,
+  first_time_calls bigint,
+  missed           bigint,
+  baseline_calls   numeric
+);
+INSERT INTO marts.fct_calls_location_day VALUES
+  ('crigloca00000000000000001', 'crigfrana0000000000000001', '2026-11-01', 10, 8, 9, 4, 1, 12),
+  ('crigloca00000000000000001', 'crigfrana0000000000000001', '2026-11-02', 12, 11, 12, 5, 1, 12),
+  ('crigloca00000000000000002', 'crigfrana0000000000000001', '2026-11-01', 6, 5, 6, 2, 1, NULL),
+  ('criglocb00000000000000001', 'crigfranb0000000000000001', '2026-11-01', 40, 30, 38, 20, 8, 35),
+  ('criglocb00000000000000002', 'crigfranb0000000000000001', '2026-11-02', 50, 45, 49, 21, 4, 44),
+  (NULL, 'crigfranb0000000000000001', '2026-11-02', 3, 3, 3, 1, 0, NULL);

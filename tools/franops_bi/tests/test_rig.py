@@ -44,6 +44,8 @@ COMPOSE = REPO / "rig" / "compose.yml"
 URL = os.environ.get("SUPERSET_URL", "http://127.0.0.1:18388")
 ADMIN_PASSWORD = os.environ.get("RIG_ADMIN_PASSWORD", "admin-rig-pass")
 DB_PASSWORDS = {"databases/warehouse.yaml": "warehouse-rig-pass"}
+# The tables of marts in rig/warehouse/seed.sql: the fixture table and the real CallRail mart (S12.4).
+MARTS_TABLES = ["calls_daily", "fct_calls_location_day"]
 
 TABLES = {"databases": "dbs", "datasets": "tables", "charts": "slices", "dashboards": "dashboards"}
 TAG_OBJECT_TYPE = {"datasets": "dataset", "charts": "chart", "dashboards": "dashboard"}
@@ -164,7 +166,7 @@ def test_ac1_deploy_into_an_empty_instance_creates_each_asset(
     # The database connects with the password from FRANOPS_BI_DB_PASSWORDS.
     tables = warehouse_tables(client)
     print(f"AC1 warehouse tables in marts (live): {tables}")
-    assert tables == ["calls_daily"]
+    assert tables == MARTS_TABLES
     STATE["after_first"] = snapshot()
     STATE["export_first"] = export_content(client)
 
@@ -202,7 +204,7 @@ def test_ac2_second_deploy_changes_nothing(client: Superset) -> None:
     assert first["versions"], "no *_version table found: the history check measures nothing"
     assert report["version_rows_added"] == {}
     # The overwrite import kept the stored password: the warehouse still answers.
-    assert warehouse_tables(client) == ["calls_daily"]
+    assert warehouse_tables(client) == MARTS_TABLES
 
 
 def test_ac3_each_chart_and_dashboard_has_the_certified_tag() -> None:

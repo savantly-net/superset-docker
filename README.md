@@ -73,6 +73,12 @@ RIG_SKIP_BUILD=1 rig/roles-check.sh
   service account with a second role are refused. It also reads the embed settings below from the app and from the `/login/` response.
 - `test-guest-login-check.sh` breaks it three ways (Superset's own security manager, `GUEST_ROLE_NAME =
   "Public"`, the default Talisman settings) and fails unless the check fails on each.
+- `rig/scorecard-check.sh [<sources_bi_dir>]` checks the certified calls scorecard of `franops_sources`
+  (fran-ops S12.4). The default folder is `../franops-data-dbt/sources/bi`. On an empty rig, one deploy
+  with `callrail` from a FranOps stub must create the brand fixture and the full certified set of
+  `bi/callrail/` (`rig/scorecard_deploy_check.py`). Then a guest token for franchisee A must get rows of A
+  only from each certified chart, and the seeded fault must leak. `rig/make_source_assets.py` made the
+  folder on the rig; `marts.fct_calls_location_day` in `rig/warehouse/seed.sql` has the mart's columns.
 - `rig/rls-check.sh` is the automated RLS check (S5.6, NFR-8). It starts the rig, deploys
   `tests/fixtures/bi` with `franops-bi`, and `rig/rig.sh rls-plan` finds each chart tagged `certified`.
   `scripts/rls_check.py` logs in as the service account, mints a guest token for franchisee A
